@@ -1,6 +1,6 @@
 [project]
 name = "pygira"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Provisioning CLI for Gira G1 and X1 devices"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -39,8 +39,11 @@ Issues = "https://github.com/dphi/pygira/issues"
 pygira = "pygira.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pygira"]
