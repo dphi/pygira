@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+
+# Device credentials — never commit
+devices.toml
+
+# Logs and other temporary files
+.tmp/
+
+# Tool caches and OS files
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# Coverage reports
+.coverage
+coverage.xml
+htmlcov/
+
+# Local-only
+firmware/
+research/
+.omo/

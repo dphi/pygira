@@ -1,0 +1,32 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check src/ tests/
+        language: system
+        pass_filenames: false
+
+      - id: ruff-format-check
+        name: ruff format --check
+        entry: uv run ruff format --check src/ tests/
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy src/
+        language: system
+        pass_filenames: false
+
+      - id: pytest-coverage
+        name: pytest with coverage
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+
+      - id: diff-coverage
+        name: diff coverage against HEAD
+        entry: uv run diff-cover coverage.xml --compare-branch HEAD --fail-under=0
+        language: system
+        pass_filenames: false

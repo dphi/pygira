@@ -1,0 +1,28 @@
+# Devices can live directly at the top level. Use these with:
+#   pygira --name living_room_g1 info
+
+[devices.living_room_g1]
+type = "g1"
+host = "192.168.1.240"
+username = "device"
+password = "change-me"
+
+[devices.main_x1]
+type = "x1"
+host = "192.168.1.241"
+username = "device"
+admin_password = "change-me"
+app_username = "WohnungN"
+app_password = "change-me"
+
+# Locations are optional grouping only. Use these with:
+#   pygira --location front_door --name tks_gateway config list
+
+[locations.front_door]
+name = "Front Door"
+
+[locations.front_door.devices.tks_gateway]
+type = "tks-ip"
+host = "192.168.1.242"
+username = "admin"
+password = "change-me"
