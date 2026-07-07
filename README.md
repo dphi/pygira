@@ -25,10 +25,86 @@ uv tool install pygira
 - You can enforce a type with `--device {g1,x1}`.
 - If `--device` does not match the detected device type, the command fails immediately.
 
-## Command support
+## What you can do
 
-- Shared: info, network configuration, logs, firmware update, restart, factory reset, SSH control.
-- G1-only: weather and TKS configuration.
+Every command takes `--ip`, `--username`, and `--password` (or a named device
+from `devices.toml`, see below). Run `pygira <command> --help` for the full
+option list. `pygira --help` lists everything.
+
+**Inspect a device**
+
+```bash
+pygira info --ip 192.168.1.240              # firmware version, MAC, IP config
+pygira info --ip 192.168.1.240 --long       # extended info from webservice
+pygira detect --ip 192.168.1.240            # identify model and firmware
+pygira diagnostics --ip 192.168.1.240       # diagnostic page data
+```
+
+**Network and time**
+
+```bash
+pygira set-ip --ip 192.168.1.240 --static-ip 192.168.1.50 --subnet 255.255.255.0 --gateway 192.168.1.1
+pygira set-ip --ip 192.168.1.240 --dhcp
+pygira set-ntp --ip 192.168.1.240 --server pool.ntp.org --interval 10
+pygira get-ntp --ip 192.168.1.240
+```
+
+**Logs**
+
+```bash
+pygira pull-logs --ip 192.168.1.240 --output logs.zip   # download log bundle
+pygira tail-logs --ip 192.168.1.240                     # live-tail new log lines
+pygira get-logging / set-logging                        # X1 log verbosity
+```
+
+**Firmware and lifecycle**
+
+```bash
+pygira check-update --ip 192.168.1.240                  # is an online update available?
+pygira upgrade --ip 192.168.1.240 --online              # update from Gira servers
+pygira upgrade --ip 192.168.1.240 --file firmware.zip   # update from a local ZIP
+pygira restart --ip 192.168.1.240
+pygira factory-reset --ip 192.168.1.240 --confirm       # erases all configuration
+pygira commissioning-test --ip 192.168.1.240
+```
+
+**SSH access**
+
+```bash
+pygira enable-ssh --ip 192.168.1.240        # persistent across reboots by default
+pygira disable-ssh --ip 192.168.1.240
+```
+
+**G1-only: weather and TKS-IP door gateway**
+
+```bash
+pygira set-weather --ip 192.168.1.240 --zip 10115 --country DE
+pygira set-tks --ip 192.168.1.240 --tks-ip 192.168.1.10 --tks-user user --tks-pass secret
+pygira tks-status --ip 192.168.1.240
+pygira gds --ip 192.168.1.240 <subcommand>  # low-level GDS WebSocket access
+```
+
+**TKS-IP gateway** (the separate door-communication device)
+
+```bash
+pygira activate-tks-web --ip 192.168.1.10       # start the port-8080 web app
+pygira tks-backup-save --ip 192.168.1.10
+pygira tks-backup-restore --ip 192.168.1.10
+pygira tks-firmware-update --ip 192.168.1.10
+```
+
+**One-shot bootstrap** — set IP, TKS-IP, and weather in a single run:
+
+```bash
+pygira bootstrap --ip 192.168.1.240 ...
+```
+
+**X1 program transfer** (experimental):
+
+```bash
+pygira x1-export-program --ip 192.168.1.241
+pygira x1-import-program --ip 192.168.1.241 --file program.gpa
+```
 
 ## Device configuration
 
