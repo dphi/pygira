@@ -1,0 +1,29 @@
+{
+  "device_type": "x1",
+  "firmware": "2.8.874.0",
+  "source": "sanitized hardware response",
+  "device_info_response": {
+    "data": {
+      "CurrentFirmwareVersion": "2.8.874.0",
+      "AppName": "Gira X1",
+      "MacAddress": "00:11:22:33:44:66",
+      "IpAddress": "192.0.2.20",
+      "SubnetMask": "255.255.255.0",
+      "DefaultGateway": "192.0.2.1",
+      "NameServer": "192.0.2.53",
+      "Dhcp": "true",
+      "DeviceName": "X1 Controller",
+      "DeviceId": "x1-contract",
+      "SerialNumber": "SANITIZED"
+    }
+  },
+  "firmware_status_response": {
+    "data": {
+      "currentVersion": "2.8.874.0",
+      "offlineVersion": "2.9.0.0",
+      "isUpdating": false,
+      "isDownloading": true,
+      "progress": 42
+    }
+  }
+}

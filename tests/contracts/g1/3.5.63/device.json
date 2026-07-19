@@ -1,0 +1,25 @@
+{
+  "device_type": "g1",
+  "firmware": "3.5.63",
+  "source": "sanitized hardware response",
+  "device_info_response": {
+    "data": {
+      "CurrentFirmwareVersion": "3.5.63",
+      "MacAddress": "00:11:22:33:44:55",
+      "IpAddress": "192.0.2.10",
+      "SubnetMask": "255.255.255.0",
+      "DefaultGateway": "192.0.2.1",
+      "NameServer": "192.0.2.53",
+      "Dhcp": false,
+      "KIM-FriendlyName": "Gira G1",
+      "EntityId": "g1-contract"
+    }
+  },
+  "firmware_status_response": {
+    "data": {
+      "CurrentFirmwareVersion": "3.5.63",
+      "state": "idle",
+      "progress": "0"
+    }
+  }
+}

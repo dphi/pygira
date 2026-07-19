@@ -1,27 +1,43 @@
 """Shared Pydantic models for G1 provisioning data."""
 
 import sys
+from collections.abc import Mapping
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path
+from typing import Any
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from pygira.core.types import DeviceType
 
 
-def _check_ip(v: str) -> str:
-    if v:
-        ip_address(v)
-    return v
+def _as_bool(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
-class DeviceConfig(BaseModel):
+def _as_string(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+class ConfigModel(BaseModel):
+    """Base model for configuration files with typo-safe parsing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeviceConfig(ConfigModel):
     """Named device entry from devices.toml."""
 
-    type: str
+    type: DeviceType
     host: str = ""
     ip: str = ""
     username: str = ""
@@ -30,24 +46,42 @@ class DeviceConfig(BaseModel):
     app_username: str = ""
     app_password: str = ""
 
+    @model_validator(mode="after")
+    def _valid_device(self) -> "DeviceConfig":
+        if self.type == DeviceType.UNKNOWN:
+            msg = "Device type 'unknown' cannot be configured"
+            raise ValueError(msg)
+        if bool(self.host) == bool(self.ip):
+            msg = "Exactly one of host or ip must be configured"
+            raise ValueError(msg)
+        address = self.address
+        if "://" in address or "/" in address or any(char.isspace() for char in address):
+            msg = "Device host must be a hostname or IP address without a URL scheme or path"
+            raise ValueError(msg)
+        password = self.admin_password or self.password
+        if not password:
+            msg = f"Configured {self.type.value} device is missing a password"
+            raise ValueError(msg)
+        return self
+
     @property
     def address(self) -> str:
         """Hostname or IP address used to reach the device."""
         return self.host or self.ip
 
 
-class LocationConfig(BaseModel):
+class LocationConfig(ConfigModel):
     """Optional named grouping for devices."""
 
     name: str = ""
-    devices: dict[str, DeviceConfig] = {}
+    devices: dict[str, DeviceConfig] = Field(default_factory=dict)
 
 
-class PygiraConfig(BaseModel):
+class PygiraConfig(ConfigModel):
     """Complete devices.toml configuration."""
 
-    devices: dict[str, DeviceConfig] = {}
-    locations: dict[str, LocationConfig] = {}
+    devices: dict[str, DeviceConfig] = Field(default_factory=dict)
+    locations: dict[str, LocationConfig] = Field(default_factory=dict)
 
 
 def load_config(path: str | Path) -> PygiraConfig:
@@ -91,7 +125,7 @@ class WeatherStation(BaseModel):
 
 
 class DeviceInfo(BaseModel):
-    """Read-only snapshot of G1 device identity and network state."""
+    """Normalized read-only device identity and network snapshot."""
 
     firmware_version: str = ""
     mac_address: str = ""
@@ -103,3 +137,59 @@ class DeviceInfo(BaseModel):
     dhcp: bool = True
     device_name: str = ""
     entity_id: str = ""
+    app_name: str = ""
+    serial_number: str = ""
+
+    @classmethod
+    def from_webservice(cls, response: Mapping[str, Any]) -> "DeviceInfo":
+        """Normalize a G1 or X1 getDeviceInfo response envelope."""
+        nested = response.get("data", response)
+        data = nested if isinstance(nested, Mapping) else {}
+        return cls(
+            firmware_version=_as_string(data.get("CurrentFirmwareVersion")),
+            mac_address=_as_string(data.get("MacAddress")),
+            ip_address=_as_string(data.get("IpAddress")),
+            subnet_mask=_as_string(data.get("SubnetMask")),
+            default_gateway=_as_string(data.get("DefaultGateway")),
+            primary_dns=_as_string(data.get("NameServer", data.get("PrimaryDNS"))),
+            secondary_dns=_as_string(data.get("SecondaryDns", data.get("SecondaryDNS"))),
+            dhcp=_as_bool(data.get("Dhcp"), default=True),
+            device_name=_as_string(data.get("KIM-FriendlyName", data.get("DeviceName"))),
+            entity_id=_as_string(data.get("EntityId", data.get("DeviceId"))),
+            app_name=_as_string(data.get("AppName")),
+            serial_number=_as_string(data.get("SerialNumber")),
+        )
+
+
+class FirmwareStatus(BaseModel):
+    """Normalized firmware-update state shared by G1 and X1 responses."""
+
+    current_version: str = ""
+    available_version: str = ""
+    state: str = ""
+    progress: float | None = None
+    is_updating: bool = False
+    is_downloading: bool = False
+
+    @classmethod
+    def from_webservice(cls, response: Mapping[str, Any]) -> "FirmwareStatus":
+        """Normalize a firmware status response envelope."""
+        nested = response.get("data", response)
+        data = nested if isinstance(nested, Mapping) else {}
+        progress_value = data.get("progress")
+        try:
+            progress = float(progress_value) if progress_value is not None else None
+        except (TypeError, ValueError):
+            progress = None
+        return cls(
+            current_version=_as_string(
+                data.get("currentVersion", data.get("CurrentFirmwareVersion", "")),
+            ),
+            available_version=_as_string(
+                data.get("offlineVersion", data.get("availableVersion", "")),
+            ),
+            state=_as_string(data.get("state", data.get("status"))),
+            progress=progress,
+            is_updating=_as_bool(data.get("isUpdating")),
+            is_downloading=_as_bool(data.get("isDownloading")),
+        )

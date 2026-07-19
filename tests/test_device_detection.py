@@ -8,6 +8,7 @@ from lxml import etree
 from pygira.core.detect import DetectionResult, detect_device_type
 from pygira.core.resolve import resolve_device_type
 from pygira.core.types import DeviceType
+from pygira.exceptions import DeviceDetectionError
 from tests._httpmock import Request, Response
 
 
@@ -35,13 +36,13 @@ def test_detect_device_x1_from_name() -> None:
 
 def test_resolve_mismatch_raises() -> None:
     detected = DetectionResult(DeviceType.X1, "DeviceType=X1")
-    with pytest.raises(RuntimeError, match="Detected device"):
+    with pytest.raises(DeviceDetectionError, match="Detected device"):
         resolve_device_type(DeviceType.G1, detected)
 
 
 def test_resolve_unknown_without_request_raises() -> None:
     detected = DetectionResult(DeviceType.UNKNOWN, "n/a")
-    with pytest.raises(RuntimeError, match="Could not auto-detect"):
+    with pytest.raises(DeviceDetectionError, match="Could not auto-detect"):
         resolve_device_type(None, detected)
 
 

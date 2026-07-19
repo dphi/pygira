@@ -15,7 +15,7 @@ def common_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
     return click.option(
         "--username",
         default=None,
-        help="Device username (default: admin for X1, device for G1)",
+        help="Device username (default: device for G1 and X1)",
     )(
         click.option(
             "--password",

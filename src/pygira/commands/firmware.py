@@ -15,7 +15,7 @@ from pygira.options import common_options
 def _client(
     ip: str | None,
     password: str | None,
-    username: str,
+    username: str | None,
     timeout: float,
 ) -> tuple[DeviceType, api_mod.ApiClient]:
     profile, ip, username, password = resolve_login(ip, username, password)
@@ -31,7 +31,12 @@ def _client(
 
 @click.command("check-update")
 @common_options
-def check_update(ip: str | None, password: str | None, username: str, timeout: float) -> None:
+def check_update(
+    ip: str | None,
+    password: str | None,
+    username: str | None,
+    timeout: float,
+) -> None:
     """Check if an online firmware update is available."""
     try:
         device_type, client = _client(ip, password, username, timeout)
@@ -60,7 +65,7 @@ def upgrade(**kwargs: object) -> None:
     """Upgrade device firmware (local file or online)."""
     ip = cast("str | None", kwargs["ip"])
     password = cast("str | None", kwargs["password"])
-    username = cast("str", kwargs["username"])
+    username = cast("str | None", kwargs["username"])
     timeout = cast("float", kwargs["timeout"])
     firmware_file = cast("str | None", kwargs["firmware_file"])
     online = cast("bool", kwargs["online"])
@@ -105,7 +110,7 @@ def upgrade(**kwargs: object) -> None:
 def commissioning_test(
     ip: str | None,
     password: str | None,
-    username: str,
+    username: str | None,
     timeout: float,
 ) -> None:
     """Run the built-in commissioning test."""
@@ -128,7 +133,7 @@ def commissioning_test(
 def enable_ssh(
     ip: str | None,
     password: str | None,
-    username: str,
+    username: str | None,
     timeout: float,
     persistent: bool,
 ) -> None:
@@ -144,7 +149,12 @@ def enable_ssh(
 
 @click.command("disable-ssh")
 @common_options
-def disable_ssh(ip: str | None, password: str | None, username: str, timeout: float) -> None:
+def disable_ssh(
+    ip: str | None,
+    password: str | None,
+    username: str | None,
+    timeout: float,
+) -> None:
     """Stop sshd and remove the persistent SSH-enable marker."""
     try:
         _, client = _client(ip, password, username, timeout)

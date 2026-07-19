@@ -1,19 +1,20 @@
 # Project TODO
 
-## X1 Programming Workflows
+## Protocol stabilization
 
-- [ ] Add `x1-export-program` command to export X1 programming/project data.
-- [ ] Implement programming mode handling for export (`setProgrammingMode` with mode support).
-- [ ] Implement `getDownloadLink` flow and artifact download handling for X1 export.
-- [ ] Add robust output naming/path handling for exported X1 project artifacts.
+- [ ] Confirm X1 program export and import behavior against each supported firmware family.
+- [ ] Add explicit schema validation and compatibility metadata to exported X1 programs.
+- [ ] Extend caller-provided CA support to configurationservice and add fingerprint pinning.
 
-- [ ] Add `x1-import-program` (re-program) command.
-- [ ] Implement upload/apply pipeline for X1 project import (experimental first).
-- [ ] Add strict safety checks and explicit warnings around re-program operations.
-- [ ] Add response diagnostics for unsupported/unknown X1 re-program API behavior.
+## Library evolution
 
-## Validation and Quality
+- [ ] Add typed response models for diagnostics, TKS status, and remaining stable payloads.
+- [ ] Add an async device facade and keep synchronous wrappers separate.
+- [ ] Route GDS responses and push events through a single reader task and event queue.
+- [ ] Consolidate duplicate session-authentication implementations.
 
-- [ ] Add integration-style tests (mocked transport) for X1 export workflow.
-- [ ] Add guarded tests for experimental X1 re-program behavior and failure paths.
-- [ ] Document supported/experimental status of X1 programming features in `README.md`.
+## Validation and quality
+
+- [ ] Add opt-in hardware integration tests with credential-safe fixtures.
+- [ ] Increase overall branch coverage, prioritizing CLI failure and timeout paths.
+- [ ] Validate distribution metadata and source archives with a dedicated packaging checker.

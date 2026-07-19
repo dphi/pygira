@@ -19,9 +19,12 @@ import base64
 import json
 from pathlib import Path
 
+import pytest
+
 from pygira.api import ApiClient
 from pygira.api import _auth_header as api_auth
 from pygira.config_service import _auth_header as cs_auth
+from pygira.exceptions import AuthenticationError, DeviceApiError
 from pygira.models import NetworkConfig
 from tests import _httpmock as respx
 from tests._httpmock import Response
@@ -39,6 +42,8 @@ PASS = "secret"
 
 EXPECTED_AUTH = "Basic " + base64.b64encode(b"admin:secret").decode()
 SESSION_AUTH_CALL_COUNT = 4
+EXPECTED_MODEL_CALL_COUNT = 2
+EXPECTED_PROGRESS = 25
 
 
 # ── auth header ───────────────────────────────────────────────────────────────
@@ -372,6 +377,78 @@ def test_api_client_session_fallback_preserves_nested_data_payload() -> None:
         "keepAlive": True,
         "data": {"forceLong": True},
     }
+
+
+@respx.mock
+def test_api_client_returns_normalized_models() -> None:
+    route = respx.post(f"http://{HOST}/api").mock(
+        side_effect=[
+            Response(
+                200,
+                json={
+                    "data": {
+                        "CurrentFirmwareVersion": "3.5.63",
+                        "IpAddress": "192.0.2.10",
+                    },
+                },
+            ),
+            Response(
+                200,
+                json={"data": {"currentVersion": "3.5.63", "progress": "25"}},
+            ),
+        ],
+    )
+    client = ApiClient(HOST, USER, PASS)
+
+    info = client.get_device_info_model()
+    status = client.get_firmware_status_model()
+
+    assert info.ip_address == "192.0.2.10"
+    assert status.current_version == "3.5.63"
+    assert status.progress == EXPECTED_PROGRESS
+    assert len(route.calls) == EXPECTED_MODEL_CALL_COUNT
+
+
+@respx.mock
+def test_api_client_raises_structured_device_error_without_auth_retry() -> None:
+    route = respx.post(f"http://{HOST}/api").mock(
+        return_value=Response(200, json={"error": "ERR_CONFIGURATION", "id": "228"}),
+    )
+
+    with pytest.raises(DeviceApiError) as exc_info:
+        ApiClient(HOST, USER, PASS).check_online_update()
+
+    assert exc_info.value.command == "infoonline"
+    assert exc_info.value.code == "228"
+    assert len(route.calls) == 1
+
+
+@respx.mock
+def test_api_client_validates_session_retry_response() -> None:
+    respx.post(f"http://{HOST}/api").mock(
+        side_effect=[
+            Response(200, json={"error": "ERR_COMMUNICATION", "id": "235"}),
+            Response(200, json={"data": {"salt": "A1", "sessionSalt": "B2"}}),
+            Response(200, json={}),
+            Response(200, json={"error": "ERR_CONFIGURATION", "id": "228"}),
+        ],
+    )
+
+    with pytest.raises(DeviceApiError, match="ERR_CONFIGURATION"):
+        ApiClient(HOST, USER, PASS).check_online_update()
+
+
+@respx.mock
+def test_api_client_raises_authentication_error_when_session_init_fails() -> None:
+    respx.post(f"http://{HOST}/api").mock(
+        side_effect=[
+            Response(200, json={"error": "ERR_COMMUNICATION", "id": "235"}),
+            Response(200, json={"error": "ERR_AUTHENTICATION", "id": "220"}),
+        ],
+    )
+
+    with pytest.raises(AuthenticationError, match="ERR_AUTHENTICATION"):
+        ApiClient(HOST, USER, PASS).check_online_update()
 
 
 @respx.mock

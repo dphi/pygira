@@ -27,6 +27,6 @@ repos:
 
       - id: diff-coverage
         name: diff coverage against HEAD
-        entry: uv run diff-cover coverage.xml --compare-branch HEAD --fail-under=0
+        entry: uv run diff-cover coverage.xml --compare-branch HEAD --fail-under=80
         language: system
         pass_filenames: false

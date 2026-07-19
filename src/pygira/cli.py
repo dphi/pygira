@@ -2,11 +2,13 @@
 
 import click
 
+from pygira import __version__
 from pygira.commands import bootstrap, config, device, firmware, gds, maintenance
 from pygira.core.types import DeviceType
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name="pygira")
 @click.option(
     "--device",
     type=click.Choice(["g1", "x1"]),

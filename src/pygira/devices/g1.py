@@ -2,13 +2,14 @@
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from ssl import SSLContext
 from typing import TypeVar
 
 from pygira.api import ApiClient
 from pygira.core.types import DeviceCapabilities, DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.gds import GdsClient, run_gds
-from pygira.models import NetworkConfig
+from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
 
 T = TypeVar("T")
 
@@ -28,12 +29,15 @@ class G1:
     Control methods raise RuntimeError on device-reported failure.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - explicit connection and TLS options
         self,
         host: str,
         username: str = "device",
         password: str = "",
         timeout: float = 15.0,
+        *,
+        verify_tls: bool = False,
+        ssl_context: SSLContext | None = None,
     ) -> None:
         """Create a G1 facade for a single host."""
         self.api = ApiClient(host, username, password, api_prefix="/api", timeout=timeout)
@@ -41,9 +45,19 @@ class G1:
         self._username = username
         self._password = password
         self._timeout = timeout
+        self._verify_tls = verify_tls
+        self._ssl_context = ssl_context
 
     def _gds(self, coro: Callable[[GdsClient], Awaitable[T]]) -> T:
-        return run_gds(self._host, self._username, self._password, coro, self._timeout)
+        return run_gds(
+            self._host,
+            self._username,
+            self._password,
+            coro,
+            self._timeout,
+            verify_tls=self._verify_tls,
+            ssl_context=self._ssl_context,
+        )
 
     # ------------------------------------------------------------------ #
     # Inspection — iscwebservice (port 80)                                #
@@ -52,6 +66,10 @@ class G1:
     def device_info(self, *, long: bool = True) -> dict:
         """Return device information from iscwebservice."""
         return self.api.get_device_info(force_long=long)
+
+    def device_info_model(self, *, long: bool = True) -> DeviceInfo:
+        """Return normalized, typed device information."""
+        return self.api.get_device_info_model(force_long=long)
 
     def diagnostic_page(self) -> dict:
         """Return the diagnostic page from iscwebservice."""
@@ -64,6 +82,10 @@ class G1:
     def firmware_status(self) -> dict:
         """Return the current firmware status."""
         return self.api.get_firmware_status()
+
+    def firmware_status_model(self) -> FirmwareStatus:
+        """Return normalized, typed firmware status."""
+        return self.api.get_firmware_status_model()
 
     def upgrade_progress(self) -> dict:
         """Return the current upgrade progress."""

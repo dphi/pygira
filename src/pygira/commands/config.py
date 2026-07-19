@@ -1,5 +1,8 @@
 """Configuration file management commands."""
 
+import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -11,6 +14,8 @@ from rich.table import Table
 from pygira.context import console, die
 from pygira.core.types import DeviceType
 from pygira.models import DeviceConfig, LocationConfig, PygiraConfig, load_config
+
+_PRIVATE_FILE_MODE = 0o600
 
 
 @dataclass(frozen=True)
@@ -38,12 +43,12 @@ class DeviceInput:
 
 
 def _quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _device_lines(device: DeviceConfig) -> list[str]:
     fields = {
-        "type": device.type,
+        "type": device.type.value,
         "host": device.host,
         "ip": device.ip,
         "username": device.username,
@@ -58,17 +63,18 @@ def _device_lines(device: DeviceConfig) -> list[str]:
 def _serialize(config: PygiraConfig) -> str:
     lines: list[str] = []
     for name, device in sorted(config.devices.items()):
-        lines.append(f"[devices.{name}]")
+        lines.append(f"[devices.{_quote(name)}]")
         lines.extend(_device_lines(device))
         lines.append("")
 
     for location_key, location in sorted(config.locations.items()):
-        lines.append(f"[locations.{location_key}]")
+        location_table = f"locations.{_quote(location_key)}"
+        lines.append(f"[{location_table}]")
         if location.name:
             lines.append(f"name = {_quote(location.name)}")
         lines.append("")
         for name, device in sorted(location.devices.items()):
-            lines.append(f"[locations.{location_key}.devices.{name}]")
+            lines.append(f"[{location_table}.devices.{_quote(name)}]")
             lines.extend(_device_lines(device))
             lines.append("")
 
@@ -87,13 +93,29 @@ def _load_or_empty(path: Path) -> PygiraConfig:
 
 def _write_config(path: Path, config: PygiraConfig) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_serialize(config))
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
+    temporary_path = Path(temporary_name)
+    try:
+        temporary_path.chmod(_PRIVATE_FILE_MODE)
+        file = os.fdopen(fd, "w", encoding="utf-8")
+        fd = -1
+        with file:
+            file.write(_serialize(config))
+            file.flush()
+            os.fsync(file.fileno())
+        temporary_path.replace(path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def _build_device(fields: DeviceInput) -> DeviceConfig:
+    device_type = DeviceType(fields.device_type)
     if fields.device_type == DeviceType.X1.value:
         return DeviceConfig(
-            type=fields.device_type,
+            type=device_type,
             host=fields.host,
             username=fields.username or "device",
             admin_password=fields.password,
@@ -102,13 +124,13 @@ def _build_device(fields: DeviceInput) -> DeviceConfig:
         )
     if fields.device_type == DeviceType.TKS_IP.value:
         return DeviceConfig(
-            type=fields.device_type,
+            type=device_type,
             host=fields.host,
             username=fields.username or "admin",
             password=fields.password,
         )
     return DeviceConfig(
-        type=fields.device_type,
+        type=device_type,
         host=fields.host,
         username=fields.username or "device",
         password=fields.password,

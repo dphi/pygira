@@ -22,11 +22,28 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --group dev
 
-      - name: Tests
+      - name: Ruff lint
+        run: uv run ruff check src/ tests/
+
+      - name: Ruff format check
+        run: uv run ruff format --check src/ tests/
+
+      - name: Mypy type check
+        run: uv run mypy src/
+
+      - name: Tests with coverage
         run: uv run pytest
 
       - name: Build distributions
         run: uv build
+
+      - name: Smoke-test installed wheel
+        run: |
+          uv venv .venv-smoke
+          uv pip install --python .venv-smoke/bin/python dist/*.whl
+          .venv-smoke/bin/python -c "import pygira; assert pygira.__version__"
+          .venv-smoke/bin/pygira --version
+          .venv-smoke/bin/pygira --help
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7

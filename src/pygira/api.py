@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from pygira import _http as httpx
-from pygira.models import NetworkConfig
+from pygira.exceptions import AuthenticationError, DeviceApiError
+from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
+
+_AUTH_ERROR_CODES = {"220", "235"}
 
 
 def _auth_header(username: str, password: str) -> str:
@@ -51,25 +54,18 @@ class ApiClient:
         self.timeout = timeout
 
     def _post(self, payload: dict[str, Any]) -> dict:
+        command = str(payload.get("command", "unknown"))
         with httpx.Client(base_url=f"http://{self.host}", timeout=self.timeout) as client:
             resp = client.post(f"{self.api_prefix}", json=payload, headers=self._headers)
             resp.raise_for_status()
             data = cast("dict[str, Any]", resp.json() if resp.content else {})
-            if (
-                isinstance(data, dict)
-                and data.get("error")
-                and self.api_prefix in {"/api", "/webservice"}
-            ):
-                recovered = self._post_with_session_fallback(payload, data)
-                if recovered is not None:
-                    return recovered
-                msg = (
-                    f"API error {data.get('id', '?')}: {data.get('error')}"
-                    " (session auth also failed — check password)"
-                )
-                raise RuntimeError(
-                    msg,
-                )
+            if data.get("error"):
+                if str(data.get("id", "")) in _AUTH_ERROR_CODES and self.api_prefix in {
+                    "/api",
+                    "/webservice",
+                }:
+                    return self._post_with_session_fallback(payload, data)
+                raise DeviceApiError(command, data)
             return data
 
     @staticmethod
@@ -99,11 +95,8 @@ class ApiClient:
         self,
         payload: dict[str, Any],
         first_error: dict[str, Any],
-    ) -> dict | None:
-        # Only retry on auth/session-style errors.
-        if str(first_error.get("id", "")) not in {"220", "235"}:
-            return None
-
+    ) -> dict:
+        command = str(payload.get("command", "unknown"))
         path = self.api_prefix
         with httpx.Client(base_url=f"http://{self.host}", timeout=self.timeout) as client:
             salt_resp = client.post(
@@ -117,7 +110,7 @@ class ApiClient:
             session_salt = session_data.get("sessionSalt")
             version = session_data.get("version", "1")
             if not salt or not session_salt:
-                return None
+                raise AuthenticationError(command, salt_data or first_error)
 
             token = self._compute_auth_token(self.password, salt, session_salt, version)
             auth_resp = client.post(
@@ -129,19 +122,29 @@ class ApiClient:
             )
             auth_resp.raise_for_status()
             auth_data = cast("dict[str, Any]", auth_resp.json() if auth_resp.content else {})
-            if isinstance(auth_data, dict) and auth_data.get("error"):
-                return None
+            if auth_data.get("error"):
+                raise AuthenticationError(command, auth_data)
 
-            cmd = payload["command"]
             retry_data = {k: v for k, v in payload.items() if k != "command"}
             ws_data = (
                 retry_data.get("data")
                 if set(retry_data.keys()) == {"data"}
                 else (retry_data or None)
             )
-            retry_resp = client.post(path, json=self._ws_payload(cmd, ws_data))
+            retry_resp = client.post(path, json=self._ws_payload(command, ws_data))
             retry_resp.raise_for_status()
-            return cast("dict[str, Any]", retry_resp.json() if retry_resp.content else {})
+            retry_result = cast(
+                "dict[str, Any]",
+                retry_resp.json() if retry_resp.content else {},
+            )
+            if retry_result.get("error"):
+                error_type = (
+                    AuthenticationError
+                    if str(retry_result.get("id", "")) in _AUTH_ERROR_CODES
+                    else DeviceApiError
+                )
+                raise error_type(command, retry_result)
+            return retry_result
 
     def check_online_update(self) -> dict:
         """Query available online firmware update info."""
@@ -151,12 +154,20 @@ class ApiClient:
         """Query firmware status (used by X1 web UI polling)."""
         return self._post({"command": "getFirmwareStatus"})
 
+    def get_firmware_status_model(self) -> FirmwareStatus:
+        """Query and normalize firmware status."""
+        return FirmwareStatus.from_webservice(self.get_firmware_status())
+
     def get_device_info(self, *, force_long: bool = False) -> dict:
         """Fetch device info from webservice API."""
         payload: dict[str, Any] = {"command": "getDeviceInfo"}
         if force_long:
             payload["data"] = {"forceLong": True}
         return self._post(payload)
+
+    def get_device_info_model(self, *, force_long: bool = False) -> DeviceInfo:
+        """Fetch and normalize device information."""
+        return DeviceInfo.from_webservice(self.get_device_info(force_long=force_long))
 
     def get_diagnostic_page(self, *, completely: bool = True) -> dict:
         """Fetch diagnostic page data from webservice API."""

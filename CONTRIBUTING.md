@@ -21,13 +21,13 @@ uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run mypy src/
 uv run pytest
-uv run diff-cover coverage.xml --compare-branch HEAD --fail-under=0
+uv run diff-cover coverage.xml --compare-branch HEAD --fail-under=80
 ```
 
 `pytest` writes `coverage.xml`; run it before `diff-cover` if you invoke the commands manually.
-Overall coverage must stay at or above the configured floor. Diff coverage reports measure
-how well new or changed executable lines are covered; raise the `--fail-under` value when
-you are ready to make changed-line coverage a hard ratchet.
+Overall coverage must stay at or above the configured floor. At least 80% of new or changed
+executable lines must be covered. Prefer higher coverage for authentication, configuration,
+and destructive device operations.
 
 ## Adding a command
 
@@ -37,7 +37,7 @@ wrap the body in `try/except Exception as e: die(e)`. Commands are registered
 via `register(main)` in each file under `src/pygira/commands/` and wired in
 `cli.py`.
 
-`resolve_login()` pulls credentials from `devices.toml` when `--apartment` is
+`resolve_login()` pulls credentials from `devices.toml` when `--name` is
 given, or prompts interactively. G1-only features must call
 `require_capability()` before using the GDS transport.
 
@@ -48,6 +48,11 @@ those only intercept httpx; this project uses a stdlib-based `_http.py` shim).
 Use the `@mock` decorator or `with mock:` context, then register routes with
 `respx.get(url)`, `respx.post(url)`, etc. Shared fixture data lives in
 `tests/fixtures.py`.
+
+Sanitized firmware-specific response contracts live under
+`tests/contracts/<device>/<firmware>/`. Preserve the original protocol field names and envelope,
+record the evidence source, and replace all identifiers with documentation-only values. Never
+commit credentials, tokens, serial numbers, backups, raw logs, or private network details.
 
 ## Pull requests
 

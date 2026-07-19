@@ -28,7 +28,7 @@ class BootstrapOptions:
 
     ip: str | None
     password: str | None
-    username: str
+    username: str | None
     timeout: float
     dhcp: bool | None
     static_ip: str | None
@@ -48,7 +48,7 @@ class BootstrapOptions:
         return cls(
             ip=cast("str | None", kwargs["ip"]),
             password=cast("str | None", kwargs["password"]),
-            username=cast("str", kwargs["username"]),
+            username=cast("str | None", kwargs["username"]),
             timeout=cast("float", kwargs["timeout"]),
             dhcp=cast("bool | None", kwargs["dhcp"]),
             static_ip=cast("str | None", kwargs["static_ip"]),

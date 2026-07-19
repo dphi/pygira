@@ -51,10 +51,55 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Smoke-test installed wheel
+        if: matrix.python-version == '3.14'
+        run: |
+          uv venv .venv-smoke
+          uv pip install --python .venv-smoke/bin/python dist/*.whl
+          .venv-smoke/bin/python -c "import pygira; assert pygira.__version__"
+          .venv-smoke/bin/pygira --version
+          .venv-smoke/bin/pygira --help
+
       - name: Report diff coverage on pull requests
         if: github.event_name == 'pull_request'
-        run: uv run diff-cover coverage.xml --compare-branch origin/${{ github.base_ref }} --fail-under=0
+        run: uv run diff-cover coverage.xml --compare-branch origin/${{ github.base_ref }} --fail-under=80
 
       - name: Report diff coverage on pushes
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-        run: uv run diff-cover coverage.xml --compare-branch ${{ github.event.before }} --fail-under=0
+        run: uv run diff-cover coverage.xml --compare-branch ${{ github.event.before }} --fail-under=80
+
+  dependency-compatibility:
+    name: Dependencies (${{ matrix.resolution }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution: [lowest-direct, highest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install without the lockfile
+        run: |
+          uv venv .venv-compat
+          uv pip install \
+            --python .venv-compat/bin/python \
+            --resolution ${{ matrix.resolution }} \
+            -e . \
+            "pytest>=9.0.3" \
+            "pytest-asyncio>=1.3.0" \
+            "pytest-cov>=7.0"
+
+      - name: Test dependency boundary
+        run: .venv-compat/bin/python -m pytest

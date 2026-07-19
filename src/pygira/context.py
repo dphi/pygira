@@ -1,6 +1,5 @@
 """CLI runtime context and helpers."""
 
-import sys
 from pathlib import Path
 from typing import NoReturn
 
@@ -12,6 +11,7 @@ from pygira.core.resolve import resolve_device_type
 from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.devices.registry import get_profile
+from pygira.exceptions import UnsupportedCapabilityError
 from pygira.models import DeviceConfig, load_config
 
 console = Console()
@@ -27,7 +27,7 @@ def resolve_profile(ip: str, username: str, password: str) -> DeviceProfile:
     return get_profile(resolved)
 
 
-def _device_type(value: str) -> DeviceType:
+def _device_type(value: str | DeviceType) -> DeviceType:
     try:
         return DeviceType(value)
     except ValueError as exc:
@@ -188,19 +188,18 @@ def resolve_login(
 
 
 def die(e: Exception | str) -> NoReturn:
-    """Print error with a --help hint and exit."""
-    ctx = click.get_current_context(silent=True)
-    err.print(f"[red]Error:[/red] {e}")
-    if ctx:
-        err.print(f"  Run [bold]pygira {ctx.info_name} --help[/bold] for all options.")
-    sys.exit(1)
+    """Translate an application failure into Click's standard CLI error handling."""
+    click_error = click.ClickException(str(e))
+    if isinstance(e, Exception):
+        raise click_error from e
+    raise click_error
 
 
 def require_capability(profile: DeviceProfile, *, weather: bool = False, tks: bool = False) -> None:
     """Ensure profile supports requested capability."""
     if weather and not profile.capabilities.weather:
         msg = f"Weather configuration is not supported on {profile.display_name}."
-        raise RuntimeError(msg)
+        raise UnsupportedCapabilityError(msg)
     if tks and not profile.capabilities.tks:
         msg = f"TKS configuration is not supported on {profile.display_name}."
-        raise RuntimeError(msg)
+        raise UnsupportedCapabilityError(msg)

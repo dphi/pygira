@@ -4,7 +4,7 @@
 [![CI](https://github.com/dphi/pygira/actions/workflows/ci.yml/badge.svg)](https://github.com/dphi/pygira/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-`pygira` is a provisioning CLI for Gira G1 and X1 devices.
+`pygira` is a Python library and provisioning CLI for Gira G1 and X1 devices.
 
 ## Installation
 
@@ -14,10 +14,51 @@ pip install pygira
 uv tool install pygira
 ```
 
+## Library usage
+
+The device facades are the recommended public API. They select the correct
+protocol paths while exposing a consistent interface:
+
+```python
+from pygira import G1, NetworkConfig, X1
+
+g1 = G1("192.168.1.240", password="secret")
+print(g1.device_info_model())
+
+x1 = X1("192.168.1.241", password="secret")
+x1.set_ntp(enabled=True, server="pool.ntp.org", interval_minutes=10)
+
+x1.set_ip(
+    NetworkConfig(
+        dhcp=False,
+        ip_address="192.168.1.50",
+        subnet_mask="255.255.255.0",
+        default_gateway="192.168.1.1",
+    ),
+)
+```
+
+`G1`, `X1`, `NetworkConfig`, `DeviceInfo`, `FirmwareStatus`, `DeviceType`, and the pygira
+exception hierarchy are exported from the package root. `ApiClient` remains
+available for low-level iscwebservice access. Authentication, transport,
+protocol, timeout, capability, and device-detection failures have distinct
+public exception types.
+
+The project is currently beta. Public names exported by `pygira` are the
+compatibility-supported API; modules and names beginning with `_` are internal.
+
+Raw device dictionaries remain available through methods such as `device_info()` for protocol
+research. Prefer the corresponding `*_model()` method in applications. GDS callers may enable
+system CA verification with `G1(..., verify_tls=True)` or provide an `ssl.SSLContext` through
+`ssl_context=`.
+
 ## Supported device families
 
 - `g1`
 - `x1`
+
+See the [firmware compatibility matrix](docs/firmware-compatibility.md) for confirmed versions
+and the stability level of individual operations.
 
 ## Device selection
 
@@ -119,6 +160,10 @@ pygira config validate
 pygira config list
 ```
 
+Files created by these commands are written atomically with owner-only permissions on
+POSIX systems. They still contain plaintext device credentials, so do not synchronize or
+commit them. See [SECURITY.md](SECURITY.md) for the local-network threat model.
+
 Use named devices directly:
 
 ```bash
@@ -178,8 +223,8 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
 
 - `api.py` uses `Basic` (capital B) in the Authorization header.
 - `config_service.py` uses `basic` (lowercase) — different binary, different implementation.
-- Many G1 commands require **session auth** (getPasswordSalt → doAuthenticateSession → retry). `ApiClient._post` handles this automatically via `_post_with_session_fallback` for errors 220/235. If session auth also fails, it raises `RuntimeError` rather than returning the error dict silently.
-- GDS WebSocket uses WSS (TLS, port 4432). Auth is a query-string token: `ui` + base64(`user:password`) appended to the path `/gds/api`. URL form: `wss://<host>:4432/gds/api?ui<base64>`. Gira CA cert is private/not distributed; TLS verification is disabled in `gds.py` (local-network devices only).
+- Many G1 commands require **session auth** (getPasswordSalt → doAuthenticateSession → retry). `ApiClient._post` handles this automatically via `_post_with_session_fallback` for errors 220/235. Authentication failures raise `AuthenticationError`; other device-reported failures raise `DeviceApiError`.
+- GDS WebSocket uses WSS (TLS, port 4432). Auth is a query-string token: `ui` + base64(`user:password`) appended to the path `/gds/api`. URL form: `wss://<host>:4432/gds/api?ui<base64>`. Verification is disabled by default because the Gira CA certificate is not publicly distributed; library callers can enable system-CA verification or supply an `ssl.SSLContext` containing the device CA.
 - G1 `getDeviceInfo` without `forceLong` is publicly accessible (no auth). With `forceLong: True`, session auth is required.
 
 ### Device detection flow (`core/detect.py`)
@@ -194,7 +239,7 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
 
 All commands follow the same pattern: decorated with `@common_options`, call `resolve_login()` first, construct `ApiClient` with `profile.api_prefix`, wrap body in `try/except Exception as e: die(e)`. Commands are registered via `register(main)` in each file under `commands/` and wired in `cli.py`.
 
-`resolve_login()` pulls credentials from `devices.toml` when `--apartment` is given, or prompts interactively.
+`resolve_login()` pulls credentials from `devices.toml` when `--name` is given, or prompts interactively.
 
 ### Test infrastructure
 

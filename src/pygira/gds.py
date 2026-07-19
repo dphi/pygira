@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import websockets
 
+from pygira.exceptions import OperationTimeoutError, ProtocolError, TransportError
+
 T = TypeVar("T")
 
 if TYPE_CHECKING:
@@ -26,12 +28,13 @@ def _make_url(host: str, username: str, password: str) -> str:
     return f"wss://{host}:4432/gds/api?{token}"
 
 
-def _make_ssl() -> ssl.SSLContext:
-    # ponytail: Gira CA cert is not public; device certs are self-signed by a private CA.
-    # Accept any cert — connections are local-network only.
+def _make_ssl(*, verify_tls: bool = False) -> ssl.SSLContext:
+    """Build a TLS context, retaining the device-compatible insecure default."""
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    if not verify_tls:
+        # Gira CA cert is private and unavailable through public CA stores.
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
 
@@ -61,13 +64,37 @@ _DISCONNECT_REASON = {
 class GdsClient:
     """GDS WebSocket session for a single host (port 4432, WSS)."""
 
-    def __init__(self, host: str, username: str, password: str, timeout: float = 15.0) -> None:
+    def __init__(  # noqa: PLR0913 - transport security options are explicit public API
+        self,
+        host: str,
+        username: str,
+        password: str,
+        timeout: float = 15.0,
+        *,
+        verify_tls: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
         """Initialize without connecting; call connect() to open the session."""
         self.host = host
         self.username = username
         self.password = password
         self.timeout = timeout
+        self.ssl_context = ssl_context or _make_ssl(verify_tls=verify_tls)
         self._ws: ClientConnection | None = None
+
+    async def __aenter__(self) -> "GdsClient":
+        """Connect and return this client as an async context manager."""
+        await self.connect()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        """Close the WebSocket connection."""
+        await self.close()
 
     async def connect(self) -> None:
         """Open WebSocket connection and register application."""
@@ -75,14 +102,17 @@ class GdsClient:
         try:
             self._ws = await websockets.connect(
                 url,
-                ssl=_make_ssl(),
+                ssl=self.ssl_context,
                 open_timeout=self.timeout,
             )
+            await self._register()
         except Exception as exc:
+            await self.close()
             # Strip the credential token from the URL in any exception message.
             safe = f"wss://{self.host}:4432/gds/api?<token>"
-            raise type(exc)(str(exc).replace(url, safe)) from None
-        await self._register()
+            detail = str(exc).replace(url, safe)
+            msg = f"Could not connect or register GDS at {safe}: {detail}"
+            raise TransportError(msg) from exc
 
     async def _register(self) -> None:
         assert self._ws is not None
@@ -116,7 +146,7 @@ class GdsClient:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 msg = f"No response for GDS command {command!r}"
-                raise TimeoutError(msg)
+                raise OperationTimeoutError(msg)
             raw_resp = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
             resp = json.loads(raw_resp)
             req_echo = cast("dict[str, object]", _response_data(resp).get("request", {}))
@@ -134,8 +164,9 @@ class GdsClient:
         text = error.get("text") or "device reported an error"
         hint = error.get("hint")
         detail = f" ({hint})" if hint else ""
-        msg = f"{command} failed: {text}{detail}"
-        raise RuntimeError(msg)
+        protocol = "GDS"
+        error_detail = f"{text}{detail}"
+        raise ProtocolError(protocol, command, code, error_detail)
 
     async def get_process_view(self) -> dict:
         """Return the full GDS process view (all devices, channels, datapoints with live values)."""
@@ -322,21 +353,28 @@ class GdsClient:
         await self._send_request({"command": "SetValue", "id": "500002", "value": "1"})
 
 
-def run_gds(
+def run_gds(  # noqa: PLR0913 - mirrors explicit GdsClient connection options
     host: str,
     username: str,
     password: str,
     coro: Callable[[GdsClient], Awaitable[T]],
     timeout: float = 15.0,
+    *,
+    verify_tls: bool = False,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> T:
     """Run an async coroutine that receives a connected GdsClient."""
 
     async def _inner() -> T:
-        client = GdsClient(host, username, password, timeout=timeout)
-        await client.connect()
-        try:
+        client = GdsClient(
+            host,
+            username,
+            password,
+            timeout=timeout,
+            verify_tls=verify_tls,
+            ssl_context=ssl_context,
+        )
+        async with client:
             return await coro(client)
-        finally:
-            await client.close()
 
     return asyncio.run(_inner())

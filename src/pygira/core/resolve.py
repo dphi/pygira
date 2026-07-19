@@ -2,6 +2,7 @@
 
 from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
+from pygira.exceptions import DeviceDetectionError
 
 
 def resolve_device_type(requested: DeviceType | None, detected: DetectionResult) -> DeviceType:
@@ -9,7 +10,7 @@ def resolve_device_type(requested: DeviceType | None, detected: DetectionResult)
     if requested is None:
         if detected.device_type == DeviceType.UNKNOWN:
             msg = "Could not auto-detect device type."
-            raise RuntimeError(msg)
+            raise DeviceDetectionError(msg)
         return detected.device_type
 
     if detected.device_type == DeviceType.UNKNOWN:
@@ -17,13 +18,13 @@ def resolve_device_type(requested: DeviceType | None, detected: DetectionResult)
             f"--device {requested.value!r} was provided, but device type could not be detected "
             f"({detected.evidence})."
         )
-        raise RuntimeError(error_msg)
+        raise DeviceDetectionError(error_msg)
 
     if requested != detected.device_type:
         error_msg = (
             f"Detected device {detected.device_type.value!r}, but --device "
             f"{requested.value!r} was requested."
         )
-        raise RuntimeError(error_msg)
+        raise DeviceDetectionError(error_msg)
 
     return requested

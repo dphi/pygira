@@ -44,7 +44,7 @@ def gds(
     ctx: click.Context,
     ip: str | None,
     password: str | None,
-    username: str,
+    username: str | None,
     timeout: float,
 ) -> None:
     """Inspect and control G1 GDS WebSocket functions."""

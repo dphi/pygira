@@ -91,7 +91,7 @@ def _register_set_tks(main: click.Group) -> None:
         try:
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("str | None", kwargs.get("password")),
             )
             require_capability(profile, tks=True)
@@ -275,7 +275,7 @@ def _register_weather(main: click.Group) -> None:
         try:
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("str | None", kwargs.get("password")),
             )
             require_capability(profile, weather=True)
@@ -333,7 +333,12 @@ def _api_client(
 def _register_basic_maintenance(main: click.Group) -> None:
     @main.command()
     @common_options
-    def restart(ip: str | None, password: str | None, username: str, timeout: float) -> None:
+    def restart(
+        ip: str | None,
+        password: str | None,
+        username: str | None,
+        timeout: float,
+    ) -> None:
         """Restart the device."""
         try:
             profile, ip, username, password = resolve_login(ip, username, password)
@@ -348,7 +353,7 @@ def _register_basic_maintenance(main: click.Group) -> None:
     def factory_reset(
         ip: str | None,
         password: str | None,
-        username: str,
+        username: str | None,
         timeout: float,
         confirm: bool,
     ) -> None:
@@ -378,7 +383,7 @@ def _register_pull_logs(main: click.Group) -> None:
     def pull_logs(
         ip: str | None,
         password: str | None,
-        username: str,
+        username: str | None,
         timeout: float,
         output: str,
     ) -> None:
@@ -472,7 +477,7 @@ def _register_tail_logs(main: click.Group) -> None:
         try:
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("str | None", kwargs.get("password")),
             )
             # First fetch — establish baseline (optionally show tail of existing content).
@@ -504,7 +509,7 @@ def _register_logging_commands(main: click.Group) -> None:
     def set_logging(
         ip: str | None,
         password: str | None,
-        username: str,
+        username: str | None,
         timeout: float,
         mode: str,
     ) -> None:
@@ -524,7 +529,12 @@ def _register_logging_commands(main: click.Group) -> None:
 
     @main.command("get-logging")
     @common_options
-    def get_logging(ip: str | None, password: str | None, username: str, timeout: float) -> None:
+    def get_logging(
+        ip: str | None,
+        password: str | None,
+        username: str | None,
+        timeout: float,
+    ) -> None:
         """Show X1 logging verbosity mode."""
         try:
             profile, ip, username, password = resolve_login(ip, username, password)
@@ -548,7 +558,7 @@ def _register_x1_program_commands(main: click.Group) -> None:
     def x1_export_program(
         ip: str | None,
         password: str | None,
-        username: str,
+        username: str | None,
         timeout: float,
         output: str | None,
     ) -> None:
@@ -590,7 +600,7 @@ def _register_x1_program_commands(main: click.Group) -> None:
             config = json.loads(Path(program_file).read_text())
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("str | None", kwargs.get("password")),
             )
             _require_x1(profile, "x1-import-program")

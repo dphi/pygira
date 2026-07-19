@@ -323,7 +323,7 @@ def _human_size(kb: int) -> str:
 def _device_client(
     ip: str | None,
     password: str | None,
-    username: str,
+    username: str | None,
     timeout: float,
 ) -> api_mod.ApiClient:
     profile, ip, username, password = resolve_login(ip, username, password)
@@ -375,7 +375,7 @@ def _register_info(main: click.Group) -> None:
     def info(
         ip: str | None,
         password: str | None,
-        username: str,
+        username: str | None,
         timeout: float,
         long_info: bool,
     ) -> None:
@@ -427,7 +427,7 @@ def _register_diagnostics(main: click.Group) -> None:
             client = _device_client(
                 cast("str | None", kwargs.get("ip")),
                 cast("str | None", kwargs.get("password")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("float", kwargs["timeout"]),
             )
             result = client.get_diagnostic_page(completely=bool(kwargs["full"]))
@@ -464,7 +464,7 @@ def _register_set_ntp(main: click.Group) -> None:
             client = _device_client(
                 cast("str | None", kwargs.get("ip")),
                 cast("str | None", kwargs.get("password")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("float", kwargs["timeout"]),
             )
             server = str(kwargs["server"])
@@ -480,7 +480,12 @@ def _register_set_ntp(main: click.Group) -> None:
 def _register_get_ntp(main: click.Group) -> None:
     @main.command("get-ntp")
     @common_options
-    def get_ntp(ip: str | None, password: str | None, username: str, timeout: float) -> None:
+    def get_ntp(
+        ip: str | None,
+        password: str | None,
+        username: str | None,
+        timeout: float,
+    ) -> None:
         """Show current NTP configuration."""
         try:
             client = _device_client(ip, password, username, timeout)
@@ -527,7 +532,7 @@ def _register_set_ip(main: click.Group) -> None:
             client = _device_client(
                 cast("str | None", kwargs.get("ip")),
                 cast("str | None", kwargs.get("password")),
-                str(kwargs["username"]),
+                cast("str | None", kwargs.get("username")),
                 cast("float", kwargs["timeout"]),
             )
             current = client.get_device_info(force_long=True).get("data", {})

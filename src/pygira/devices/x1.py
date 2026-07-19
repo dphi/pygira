@@ -5,7 +5,7 @@ from pathlib import Path
 from pygira.api import ApiClient
 from pygira.core.types import DeviceCapabilities, DeviceType
 from pygira.devices.base import DeviceProfile
-from pygira.models import NetworkConfig
+from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
 
 PROFILE = DeviceProfile(
     device_type=DeviceType.X1,
@@ -51,6 +51,10 @@ class X1:
         """
         return self.api.get_device_info()
 
+    def device_info_model(self) -> DeviceInfo:
+        """Return normalized, typed device information."""
+        return self.api.get_device_info_model()
+
     def diagnostic_page(self) -> dict:
         """Free-text diagnostic blob: running processes, system/NTP/IP info."""
         return self.api.get_diagnostic_page()
@@ -62,6 +66,10 @@ class X1:
     def firmware_status(self) -> dict:
         """Return firmware status: currentVersion, isUpdating, isDownloading, progress."""
         return self.api.get_firmware_status()
+
+    def firmware_status_model(self) -> FirmwareStatus:
+        """Return normalized, typed firmware status."""
+        return self.api.get_firmware_status_model()
 
     def upgrade_progress(self) -> dict:
         """Return the current upgrade progress."""

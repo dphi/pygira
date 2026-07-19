@@ -16,12 +16,14 @@ DCS channel URNs from g1_device.xml (DcsVHsGUI.Connection, StartId=501010):
 
 import base64
 import json
+import ssl
 from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pygira.devices.g1 import G1
+from pygira.exceptions import ProtocolError, TransportError
 from pygira.gds import GdsClient, _make_url
 from tests.fixtures import (
     gds_process_view_response,
@@ -42,6 +44,38 @@ def test_gds_url_uses_lowercase_ui_token() -> None:
     assert url.startswith("wss://192.168.1.100:4432/gds/api?ui")
     payload = base64.b64decode(url.split("?ui", 1)[1]).decode()
     assert payload == "admin:secret"
+
+
+def test_gds_tls_can_use_system_verification_or_custom_context() -> None:
+    verified = GdsClient("192.0.2.1", "device", "secret", verify_tls=True)
+    assert verified.ssl_context.check_hostname
+    assert verified.ssl_context.verify_mode == ssl.CERT_REQUIRED
+
+    custom = ssl.create_default_context()
+    assert GdsClient("192.0.2.1", "device", "secret", ssl_context=custom).ssl_context is custom
+
+
+@pytest.mark.asyncio
+async def test_gds_async_context_manager_closes_connection() -> None:
+    ws = make_ws_mock(gds_register_response())
+    with ws_connect_patch(ws):
+        async with GdsClient("192.0.2.1", "device", "secret"):
+            pass
+    ws.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gds_connection_error_redacts_credentials() -> None:
+    async def fail(url: str, **kwargs: object) -> None:
+        raise RuntimeError(url)
+
+    with patch("pygira.gds.websockets.connect", fail):
+        client = GdsClient("192.0.2.1", "device", "top-secret")
+        with pytest.raises(TransportError) as exc_info:
+            await client.connect()
+
+    assert "top-secret" not in str(exc_info.value)
+    assert "<token>" in str(exc_info.value)
 
 
 def test_gds_url_not_capital_basic() -> None:
@@ -292,7 +326,7 @@ async def test_set_app_value_raises_on_gds_error() -> None:
     with ws_connect_patch(ws):
         client = GdsClient("192.168.1.100", "admin", "secret")
         await client.connect()
-        with pytest.raises(RuntimeError, match="SetAppValue failed"):
+        with pytest.raises(ProtocolError, match="SetAppValue failed"):
             await client.set_app_value("Gira.G1", "weather.settings", "{}")
 
 
@@ -307,7 +341,7 @@ async def test_set_configuration_raises_on_gds_error() -> None:
     with ws_connect_patch(ws):
         client = GdsClient("192.168.1.100", "admin", "secret")
         await client.connect()
-        with pytest.raises(RuntimeError, match="SetConfiguration failed"):
+        with pytest.raises(ProtocolError, match="SetConfiguration failed"):
             await client.set_configuration(urn, {"IpAddress": "10.0.0.1"})
 
 
@@ -322,7 +356,7 @@ async def test_set_value_raises_on_gds_error() -> None:
     with ws_connect_patch(ws):
         client = GdsClient("192.168.1.100", "admin", "secret")
         await client.connect()
-        with pytest.raises(RuntimeError, match="SetValue failed"):
+        with pytest.raises(ProtocolError, match="SetValue failed"):
             await client.set_value(urn, "0")
 
 
