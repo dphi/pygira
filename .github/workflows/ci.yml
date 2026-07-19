@@ -92,7 +92,7 @@ jobs:
 
       - name: Install without the lockfile
         run: |
-          uv venv .venv-compat
+          uv venv --python 3.10 .venv-compat
           uv pip install \
             --python .venv-compat/bin/python \
             --resolution ${{ matrix.resolution }} \
