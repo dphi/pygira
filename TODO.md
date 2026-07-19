@@ -10,8 +10,8 @@
 
 - [ ] Add typed response models for diagnostics, TKS status, and remaining stable payloads.
 - [ ] Add an async device facade and keep synchronous wrappers separate.
-- [ ] Route GDS responses and push events through a single reader task and event queue.
 - [ ] Consolidate duplicate session-authentication implementations.
+- [ ] Remove remaining broad exception wrappers from legacy CLI commands.
 
 ## Validation and quality
 

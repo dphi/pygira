@@ -5,9 +5,21 @@ import click
 from pygira import __version__
 from pygira.commands import bootstrap, config, device, firmware, gds, maintenance
 from pygira.core.types import DeviceType
+from pygira.exceptions import PygiraError
 
 
-@click.group()
+class PygiraGroup(click.Group):
+    """Translate expected library failures once at the CLI boundary."""
+
+    def invoke(self, ctx: click.Context) -> object:
+        """Invoke a command and render expected library failures for CLI users."""
+        try:
+            return super().invoke(ctx)
+        except PygiraError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+
+@click.group(cls=PygiraGroup)
 @click.version_option(version=__version__, prog_name="pygira")
 @click.option(
     "--device",

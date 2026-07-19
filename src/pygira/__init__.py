@@ -16,6 +16,7 @@ from pygira.exceptions import (
     TransportError,
     UnsupportedCapabilityError,
 )
+from pygira.gds import GdsClient
 from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig, WeatherStation
 
 try:
@@ -32,6 +33,7 @@ __all__ = [
     "DeviceType",
     "FirmwareStatus",
     "G1",
+    "GdsClient",
     "NetworkConfig",
     "OperationTimeoutError",
     "ProtocolError",

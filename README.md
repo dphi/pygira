@@ -38,8 +38,8 @@ x1.set_ip(
 )
 ```
 
-`G1`, `X1`, `NetworkConfig`, `DeviceInfo`, `FirmwareStatus`, `DeviceType`, and the pygira
-exception hierarchy are exported from the package root. `ApiClient` remains
+`G1`, `X1`, `GdsClient`, `NetworkConfig`, `DeviceInfo`, `FirmwareStatus`, `DeviceType`, and
+the pygira exception hierarchy are exported from the package root. `ApiClient` remains
 available for low-level iscwebservice access. Authentication, transport,
 protocol, timeout, capability, and device-detection failures have distinct
 public exception types.
@@ -51,6 +51,11 @@ Raw device dictionaries remain available through methods such as `device_info()`
 research. Prefer the corresponding `*_model()` method in applications. GDS callers may enable
 system CA verification with `G1(..., verify_tls=True)` or provide an `ssl.SSLContext` through
 `ssl_context=`.
+
+`GdsClient` is the async, session-oriented interface for applications that need concurrent
+GDS requests or push events. It owns WebSocket reads in one dispatcher task, correlates
+responses using echoed request fields, and exposes unmatched messages through `next_event()`
+and `listen()`. Use it as an async context manager so its reader and socket are always closed.
 
 ## Supported device families
 
@@ -237,7 +242,11 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
 
 ### Adding a command
 
-All commands follow the same pattern: decorated with `@common_options`, call `resolve_login()` first, construct `ApiClient` with `profile.api_prefix`, wrap body in `try/except Exception as e: die(e)`. Commands are registered via `register(main)` in each file under `commands/` and wired in `cli.py`.
+Commands are decorated with `@common_options`, call `resolve_login()` first, and select behavior
+through the resolved device profile. Let expected `PygiraError` failures reach the top-level
+CLI boundary, which renders them consistently as Click errors. Use `click.UsageError` for invalid
+command input; do not broadly catch programming errors. Commands are registered via
+`register(main)` in each file under `commands/` and wired in `cli.py`.
 
 `resolve_login()` pulls credentials from `devices.toml` when `--name` is given, or prompts interactively.
 

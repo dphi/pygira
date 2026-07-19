@@ -10,7 +10,9 @@ import base64
 import json
 import ssl
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import websockets
@@ -43,6 +45,43 @@ def _response_data(resp: dict[str, object]) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _parse_message(raw: str | bytes) -> dict[str, object]:
+    value = json.loads(raw)
+    if isinstance(value, dict):
+        return value
+    protocol = "GDS"
+    code = "invalid-message"
+    msg = "GDS returned a non-object WebSocket message"
+    raise ProtocolError(protocol, "receive", code, msg)
+
+
+@dataclass(slots=True)
+class _PendingRequest:
+    payload: dict[str, object]
+    future: asyncio.Future[dict[str, object]]
+
+
+def _is_echo_subset(expected: object, echoed: object) -> bool:
+    if isinstance(expected, Mapping) and isinstance(echoed, Mapping):
+        return all(
+            key in expected and _is_echo_subset(expected[key], value)
+            for key, value in echoed.items()
+        )
+    return expected == echoed
+
+
+def _requests_match(expected: dict[str, object], echoed: dict[str, object]) -> bool:
+    """Match a response using every request field echoed by the device."""
+    if expected.get("command") != echoed.get("command"):
+        return False
+    comparable = expected
+    if "id" in echoed and "id" not in expected and "urn" in expected:
+        # Some firmware echoes a URN-addressed SetValue request under `id`.
+        comparable = {**expected, "id": expected["urn"]}
+    shared_echo = {key: value for key, value in echoed.items() if key in comparable}
+    return _is_echo_subset(comparable, shared_echo)
+
+
 # From tksip-definitions.xml + layout.js dcs.messages.js
 _CONNECTION_STATE = {
     "0": "initialising",
@@ -62,7 +101,11 @@ _DISCONNECT_REASON = {
 
 
 class GdsClient:
-    """GDS WebSocket session for a single host (port 4432, WSS)."""
+    """Concurrent GDS WebSocket session for a single host (port 4432, WSS).
+
+    A background reader correlates responses and retains push messages for
+    :meth:`next_event` and :meth:`listen`.
+    """
 
     def __init__(  # noqa: PLR0913 - transport security options are explicit public API
         self,
@@ -81,6 +124,10 @@ class GdsClient:
         self.timeout = timeout
         self.ssl_context = ssl_context or _make_ssl(verify_tls=verify_tls)
         self._ws: ClientConnection | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._pending: list[_PendingRequest] = []
+        self._events: asyncio.Queue[dict[str, object] | BaseException | None] = asyncio.Queue()
+        self._send_lock = asyncio.Lock()
 
     async def __aenter__(self) -> "GdsClient":
         """Connect and return this client as an async context manager."""
@@ -98,6 +145,10 @@ class GdsClient:
 
     async def connect(self) -> None:
         """Open WebSocket connection and register application."""
+        if self._ws is not None:
+            msg = "GDS client is already connected"
+            raise TransportError(msg)
+        self._events = asyncio.Queue()
         url = _make_url(self.host, self.username, self.password)
         try:
             self._ws = await websockets.connect(
@@ -106,6 +157,10 @@ class GdsClient:
                 open_timeout=self.timeout,
             )
             await self._register()
+            self._reader_task = asyncio.create_task(
+                self._reader_loop(),
+                name=f"pygira-gds-reader-{self.host}",
+            )
         except Exception as exc:
             await self.close()
             # Strip the credential token from the URL in any exception message.
@@ -131,28 +186,85 @@ class GdsClient:
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
+        self._fail_pending(TransportError("GDS connection closed"))
+        reader = self._reader_task
+        self._reader_task = None
+        if reader is not None:
+            reader.cancel()
+            with suppress(asyncio.CancelledError):
+                await reader
         if self._ws:
             await self._ws.close()
             self._ws = None
+        await self._events.put(None)
+
+    def _fail_pending(self, exc: BaseException) -> None:
+        pending, self._pending = self._pending, []
+        for request in pending:
+            if not request.future.done():
+                request.future.set_exception(exc)
+
+    def _route_response(self, message: dict[str, object]) -> bool:
+        echoed = _response_data(message).get("request")
+        if not isinstance(echoed, dict):
+            return False
+        for index, request in enumerate(self._pending):
+            if _requests_match(request.payload, echoed):
+                self._pending.pop(index)
+                if not request.future.done():
+                    request.future.set_result(message)
+                return True
+        return False
+
+    async def _reader_loop(self) -> None:
+        """Own all WebSocket reads and route responses or push events."""
+        assert self._ws is not None
+        try:
+            while True:
+                raw = await self._ws.recv()
+                message = _parse_message(raw)
+                if self._route_response(message):
+                    continue
+                await self._events.put(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = exc if isinstance(exc, ProtocolError) else TransportError(str(exc))
+            self._fail_pending(failure)
+            await self._events.put(failure)
+
+    async def _send_message(self, payload: dict[str, object]) -> None:
+        assert self._ws is not None
+        async with self._send_lock:
+            try:
+                await self._ws.send(json.dumps({"request": payload}))
+            except Exception as exc:
+                msg = f"Could not send GDS command {payload.get('command', '')!r}"
+                raise TransportError(msg) from exc
 
     async def _send_request(self, payload: dict[str, object]) -> dict[str, object]:
-        assert self._ws is not None
-        raw = json.dumps({"request": payload})
-        await self._ws.send(raw)
-        # read until we get a response that matches our command
+        if self._ws is None or self._reader_task is None:
+            msg = "GDS client is not connected"
+            raise TransportError(msg)
+        future = asyncio.get_running_loop().create_future()
+        pending = _PendingRequest(payload, future)
+        self._pending.append(pending)
+        try:
+            await self._send_message(payload)
+        except Exception:
+            with suppress(ValueError):
+                self._pending.remove(pending)
+            raise
+
         command = payload.get("command", "")
-        deadline = asyncio.get_event_loop().time() + self.timeout
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                msg = f"No response for GDS command {command!r}"
-                raise OperationTimeoutError(msg)
-            raw_resp = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
-            resp = json.loads(raw_resp)
-            req_echo = cast("dict[str, object]", _response_data(resp).get("request", {}))
-            if req_echo.get("command") == command:
-                return resp
-            # not our response — discard and keep reading
+        try:
+            return await asyncio.wait_for(future, timeout=self.timeout)
+        except TimeoutError as exc:
+            msg = f"No response for GDS command {command!r}"
+            raise OperationTimeoutError(msg) from exc
+        finally:
+            with suppress(ValueError):
+                self._pending.remove(pending)
 
     def _raise_for_error(self, resp: dict[str, object], command: str) -> None:
         error = _response_data(resp).get("error")
@@ -289,14 +401,25 @@ class GdsClient:
 
     async def restart(self) -> None:
         """Restart the device via GDS."""
-        assert self._ws is not None
-        await self._ws.send(json.dumps({"request": {"command": "Restart", "type": "Device"}}))
+        await self._send_message({"command": "Restart", "type": "Device"})
 
     async def factory_reset(self) -> None:
         """Reset the device via GDS."""
-        assert self._ws is not None
-        raw = json.dumps({"request": {"command": "Restart", "type": "FactoryReset"}})
-        await self._ws.send(raw)
+        await self._send_message({"command": "Restart", "type": "FactoryReset"})
+
+    async def next_event(self, *, timeout: float | None = None) -> dict[str, object]:
+        """Return the next unmatched GDS push message."""
+        try:
+            item = await asyncio.wait_for(self._events.get(), timeout=timeout)
+        except TimeoutError as exc:
+            msg = "No GDS event received before the deadline"
+            raise OperationTimeoutError(msg) from exc
+        if item is None:
+            msg = "GDS connection closed"
+            raise TransportError(msg)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
     async def listen(self) -> AsyncIterator[dict[str, object]]:
         """Async generator: yield parsed messages from the GDS push stream.
@@ -304,11 +427,10 @@ class GdsClient:
         Call GetProcessView first to subscribe to all datapoint change events.
         Runs until the connection closes or the caller cancels.
         """
-        assert self._ws is not None
         # Subscribes and returns current state; the device then pushes future changes.
         await self._send_request({"command": "GetProcessView", "ui": "true", "cached": "false"})
-        async for raw in self._ws:
-            yield json.loads(raw)
+        while True:
+            yield await self.next_event()
 
     def _find_urn(
         self,

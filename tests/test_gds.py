@@ -14,6 +14,7 @@ DCS channel URNs from g1_device.xml (DcsVHsGUI.Connection, StartId=501010):
   - Connect datapoint: urn:gds:dp:<deviceId>:DcsVHsGUI.Connection:Connect
 """
 
+import asyncio
 import base64
 import json
 import ssl
@@ -23,8 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pygira.devices.g1 import G1
-from pygira.exceptions import ProtocolError, TransportError
-from pygira.gds import GdsClient, _make_url
+from pygira.exceptions import OperationTimeoutError, ProtocolError, TransportError
+from pygira.gds import GdsClient, _make_url, _requests_match
 from tests.fixtures import (
     gds_process_view_response,
     gds_register_response,
@@ -87,13 +88,33 @@ def test_gds_url_not_capital_basic() -> None:
 
 
 def make_ws_mock(*responses: dict[str, object]) -> MagicMock:
-    """Return a mock websocket that yields responses in order."""
+    """Return a mock WebSocket that releases each response after a send."""
+    incoming: asyncio.Queue[str] = asyncio.Queue()
+    remaining = iter(responses)
+
+    async def send_response(_raw: str) -> None:
+        try:
+            response = next(remaining)
+        except StopIteration:
+            return
+        incoming.put_nowait(json.dumps(response))
+
     ws = MagicMock()
-    json_responses = [json.dumps(r) for r in responses]
-    ws.recv = AsyncMock(side_effect=json_responses)
-    ws.send = AsyncMock()
+    ws.recv = AsyncMock(side_effect=incoming.get)
+    ws.send = AsyncMock(side_effect=send_response)
     ws.close = AsyncMock()
     return ws
+
+
+def make_interactive_ws() -> tuple[MagicMock, asyncio.Queue[str]]:
+    """Return a WebSocket mock whose incoming messages are controlled by a queue."""
+    incoming: asyncio.Queue[str] = asyncio.Queue()
+    incoming.put_nowait(json.dumps(gds_register_response()))
+    ws = MagicMock()
+    ws.recv = AsyncMock(side_effect=incoming.get)
+    ws.send = AsyncMock()
+    ws.close = AsyncMock()
+    return ws, incoming
 
 
 def ws_connect_patch(ws: MagicMock) -> AbstractContextManager[object]:
@@ -122,6 +143,148 @@ def gds_error_response(command: str, **request_fields: object) -> dict[str, obje
             "error": {"code": "103", "text": "Forbidden", "hint": "read-only"},
         },
     }
+
+
+# ── response dispatch ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_are_correlated_by_echoed_fields() -> None:
+    ws, incoming = make_interactive_ws()
+    first_response = {
+        "response": {
+            "request": {"command": "GetValue", "id": "first"},
+            "value": "1",
+        },
+    }
+    second_response = {
+        "response": {
+            "request": {"command": "GetValue", "id": "second"},
+            "value": "2",
+        },
+    }
+
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret")
+        await client.connect()
+        first = asyncio.create_task(client._send_request({"command": "GetValue", "id": "first"}))
+        second = asyncio.create_task(
+            client._send_request({"command": "GetValue", "id": "second"}),
+        )
+        await asyncio.sleep(0)
+        incoming.put_nowait(json.dumps(second_response))
+        incoming.put_nowait(json.dumps(first_response))
+
+        first_result, second_result = await asyncio.gather(first, second)
+        await client.close()
+
+    assert first_result == first_response
+    assert second_result == second_response
+
+
+@pytest.mark.asyncio
+async def test_push_events_are_preserved_while_request_is_pending() -> None:
+    ws, incoming = make_interactive_ws()
+    push = {"event": {"urn": "urn:gds:dp:clock", "value": "12:34"}}
+    response = {
+        "response": {
+            "request": {"command": "GetValue", "id": "clock"},
+            "value": "12:34",
+        },
+    }
+
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret")
+        await client.connect()
+        request = asyncio.create_task(
+            client._send_request({"command": "GetValue", "id": "clock"}),
+        )
+        await asyncio.sleep(0)
+        incoming.put_nowait(json.dumps(push))
+        incoming.put_nowait(json.dumps(response))
+
+        assert await request == response
+        assert await client.next_event(timeout=0.1) == push
+        await client.close()
+
+
+def test_response_matching_rejects_a_different_command() -> None:
+    assert not _requests_match(
+        {"command": "GetValue", "id": "clock"},
+        {"command": "SetValue", "id": "clock"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_requires_a_connected_client() -> None:
+    client = GdsClient("192.0.2.1", "device", "secret")
+
+    with pytest.raises(TransportError, match="not connected"):
+        await client._send_request({"command": "GetValue", "id": "clock"})
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_an_already_connected_client() -> None:
+    ws, _incoming = make_interactive_ws()
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret")
+        await client.connect()
+        with pytest.raises(TransportError, match="already connected"):
+            await client.connect()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_request_timeout_raises_operation_timeout() -> None:
+    ws, _incoming = make_interactive_ws()
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret", timeout=0.01)
+        await client.connect()
+        with pytest.raises(OperationTimeoutError, match="GetValue"):
+            await client._send_request({"command": "GetValue", "id": "clock"})
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_send_failure_is_translated_to_transport_error() -> None:
+    ws, _incoming = make_interactive_ws()
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret")
+        await client.connect()
+        ws.send = AsyncMock(side_effect=RuntimeError("socket failed"))
+        with pytest.raises(TransportError, match="Could not send GDS command"):
+            await client._send_request({"command": "GetValue", "id": "clock"})
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_malformed_message_fails_pending_request_and_event_stream() -> None:
+    ws, incoming = make_interactive_ws()
+    with ws_connect_patch(ws):
+        client = GdsClient("192.0.2.1", "device", "secret")
+        await client.connect()
+        request = asyncio.create_task(
+            client._send_request({"command": "GetValue", "id": "clock"}),
+        )
+        await asyncio.sleep(0)
+        incoming.put_nowait("[]")
+
+        with pytest.raises(ProtocolError, match="non-object"):
+            await request
+        with pytest.raises(ProtocolError, match="non-object"):
+            await client.next_event(timeout=0.1)
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_next_event_reports_timeout_and_clean_close() -> None:
+    client = GdsClient("192.0.2.1", "device", "secret")
+    with pytest.raises(OperationTimeoutError, match="No GDS event"):
+        await client.next_event(timeout=0)
+
+    await client.close()
+    with pytest.raises(TransportError, match="connection closed"):
+        await client.next_event(timeout=0.1)
 
 
 # ── RegisterApplication ───────────────────────────────────────────────────────
