@@ -193,3 +193,53 @@ class FirmwareStatus(BaseModel):
             is_updating=_as_bool(data.get("isUpdating")),
             is_downloading=_as_bool(data.get("isDownloading")),
         )
+
+
+class DiagnosticSection(BaseModel):
+    """One named free-text section from a diagnostic page."""
+
+    title: str
+    blob: str
+
+
+class DiagnosticPage(BaseModel):
+    """Normalized collection of device diagnostic sections."""
+
+    sections: list[DiagnosticSection] = Field(default_factory=list)
+
+    @classmethod
+    def from_webservice(cls, response: Mapping[str, Any]) -> "DiagnosticPage":
+        """Normalize a G1 or X1 diagnostic-page response envelope."""
+        nested = response.get("data", response)
+        data = nested if isinstance(nested, Mapping) else {}
+        raw_sections = data.get("diagnosticpage", [])
+        if not isinstance(raw_sections, list):
+            raw_sections = []
+        sections = [
+            DiagnosticSection(
+                title=_as_string(section.get("title")),
+                blob=_as_string(section.get("blob")),
+            )
+            for section in raw_sections
+            if isinstance(section, Mapping)
+        ]
+        return cls(sections=sections)
+
+
+class TksConnectionStatus(BaseModel):
+    """Normalized G1-to-TKS-IP connection state."""
+
+    present: bool
+    state: str | None = None
+    disconnect_reason: str | None = None
+
+    @classmethod
+    def from_gds(cls, response: Mapping[str, Any]) -> "TksConnectionStatus":
+        """Normalize the fixed G1 TKS connection datapoints."""
+        state = response.get("state")
+        reason = response.get("disconnect_reason")
+        return cls(
+            present=_as_bool(response.get("present")),
+            state=_as_string(state) if state is not None else None,
+            disconnect_reason=_as_string(reason) if reason is not None else None,
+        )

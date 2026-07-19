@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+from contextlib import suppress
 
 import click
 
-from pygira.context import console, die, require_capability, resolve_login
+from pygira.context import console, require_capability, resolve_login
 from pygira.core.types import DeviceType
 from pygira.devices.g1 import G1
+from pygira.exceptions import UnsupportedCapabilityError
 from pygira.gds import GdsClient
 from pygira.options import common_options
 
@@ -30,7 +32,7 @@ def _parse_key_value(pair: str) -> tuple[str, str]:
 def _require_g1(device_type: DeviceType) -> None:
     if device_type != DeviceType.G1:
         msg = "gds commands are supported for G1 only"
-        raise RuntimeError(msg)
+        raise UnsupportedCapabilityError(msg)
 
 
 def _ctx_g1(ctx: click.Context) -> G1:
@@ -48,33 +50,24 @@ def gds(
     timeout: float,
 ) -> None:
     """Inspect and control G1 GDS WebSocket functions."""
-    try:
-        profile, ip, username, password = resolve_login(ip, username, password)
-        _require_g1(profile.device_type)
-        ctx.ensure_object(dict)
-        ctx.obj.update({"profile": profile, "g1": G1(ip, username, password, timeout=timeout)})
-    except Exception as e:
-        die(e)
+    profile, ip, username, password = resolve_login(ip, username, password)
+    _require_g1(profile.device_type)
+    ctx.ensure_object(dict)
+    ctx.obj.update({"profile": profile, "g1": G1(ip, username, password, timeout=timeout)})
 
 
 @gds.command("process-view")
 @click.pass_context
 def process_view(ctx: click.Context) -> None:
     """Print the raw GDS process view."""
-    try:
-        _print_json(_ctx_g1(ctx).process_view())
-    except Exception as e:
-        die(e)
+    _print_json(_ctx_g1(ctx).process_view())
 
 
 @gds.command("device-config")
 @click.pass_context
 def device_config(ctx: click.Context) -> None:
     """Print the flat ipc device-config dictionary."""
-    try:
-        _print_json(_ctx_g1(ctx).device_config())
-    except Exception as e:
-        die(e)
+    _print_json(_ctx_g1(ctx).device_config())
 
 
 @gds.command("set-device-config")
@@ -82,12 +75,9 @@ def device_config(ctx: click.Context) -> None:
 @click.pass_context
 def set_device_config(ctx: click.Context, pairs: tuple[str, ...]) -> None:
     """Write one or more ipc device-config keys."""
-    try:
-        values = dict(_parse_key_value(pair) for pair in pairs)
-        _ctx_g1(ctx).set_device_config(values)
-        console.print("[green]Device config updated.[/green]")
-    except Exception as e:
-        die(e)
+    values = dict(_parse_key_value(pair) for pair in pairs)
+    _ctx_g1(ctx).set_device_config(values)
+    console.print("[green]Device config updated.[/green]")
 
 
 @gds.group("app-value")
@@ -102,10 +92,7 @@ def app_value(ctx: click.Context) -> None:
 @click.pass_context
 def app_value_get(ctx: click.Context, app_name: str, key: str) -> None:
     """Print a persistent GDS app value."""
-    try:
-        _print_json(_ctx_g1(ctx).app_value(app_name, key))
-    except Exception as e:
-        die(e)
+    _print_json(_ctx_g1(ctx).app_value(app_name, key))
 
 
 @app_value.command("set")
@@ -115,11 +102,8 @@ def app_value_get(ctx: click.Context, app_name: str, key: str) -> None:
 @click.pass_context
 def app_value_set(ctx: click.Context, app_name: str, key: str, value: str) -> None:
     """Write a persistent GDS app value."""
-    try:
-        _ctx_g1(ctx).set_app_value(app_name, key, value)
-        console.print("[green]App value updated.[/green]")
-    except Exception as e:
-        die(e)
+    _ctx_g1(ctx).set_app_value(app_name, key, value)
+    console.print("[green]App value updated.[/green]")
 
 
 @gds.command("set-location")
@@ -128,21 +112,15 @@ def app_value_set(ctx: click.Context, app_name: str, key: str, value: str) -> No
 @click.pass_context
 def set_location(ctx: click.Context, lat: float, lon: float) -> None:
     """Write G1 latitude and longitude device-config keys."""
-    try:
-        _ctx_g1(ctx).set_location(lat, lon)
-        console.print(f"[green]Location updated.[/green] lat={lat:.6f} lon={lon:.6f}")
-    except Exception as e:
-        die(e)
+    _ctx_g1(ctx).set_location(lat, lon)
+    console.print(f"[green]Location updated.[/green] lat={lat:.6f} lon={lon:.6f}")
 
 
 @gds.command("tks-status")
 @click.pass_context
 def tks_status(ctx: click.Context) -> None:
     """Print the live TKS-IP connection status datapoint."""
-    try:
-        _print_json(_ctx_g1(ctx).tks_status())
-    except Exception as e:
-        die(e)
+    _print_json(_ctx_g1(ctx).tks_status())
 
 
 @gds.command("configure-tks")
@@ -157,12 +135,9 @@ def tks_status(ctx: click.Context) -> None:
 @click.pass_context
 def configure_tks(ctx: click.Context, tks_ip: str, tks_user: str, tks_pass: str) -> None:
     """Configure TKS-IP credentials and trigger reconnect."""
-    try:
-        require_capability(ctx.obj["profile"], tks=True)
-        _ctx_g1(ctx).configure_tks(tks_ip, tks_user, tks_pass)
-        console.print("[green]TKS-IP gateway configured.[/green]")
-    except Exception as e:
-        die(e)
+    require_capability(ctx.obj["profile"], tks=True)
+    _ctx_g1(ctx).configure_tks(tks_ip, tks_user, tks_pass)
+    console.print("[green]TKS-IP gateway configured.[/green]")
 
 
 @gds.command("listen")
@@ -180,23 +155,16 @@ def listen(ctx: click.Context) -> None:
         finally:
             await client.close()
 
-    try:
+    with suppress(KeyboardInterrupt, click.exceptions.Abort):
         asyncio.run(_stream())
-    except (KeyboardInterrupt, click.exceptions.Abort):
-        pass
-    except Exception as e:
-        die(e)
 
 
 @gds.command("restart")
 @click.pass_context
 def restart(ctx: click.Context) -> None:
     """Restart the G1 via GDS."""
-    try:
-        _ctx_g1(ctx).restart()
-        console.print("[green]Restart command sent.[/green]")
-    except Exception as e:
-        die(e)
+    _ctx_g1(ctx).restart()
+    console.print("[green]Restart command sent.[/green]")
 
 
 @gds.command("factory-reset")
@@ -207,11 +175,8 @@ def factory_reset(ctx: click.Context, confirm: bool) -> None:
     if not confirm:
         click.confirm("This will erase all configuration. Continue?", abort=True)
 
-    try:
-        _ctx_g1(ctx).factory_reset()
-        console.print("[green]Factory reset command sent.[/green]")
-    except Exception as e:
-        die(e)
+    _ctx_g1(ctx).factory_reset()
+    console.print("[green]Factory reset command sent.[/green]")
 
 
 def register(main: click.Group) -> None:

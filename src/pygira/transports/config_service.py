@@ -1,6 +1,7 @@
 """Configurationservice transport exports."""
 
 from pygira.config_service import (
+    TlsConfig,
     download_logs,
     get_device_xml,
     parse_device_info,
@@ -9,6 +10,7 @@ from pygira.config_service import (
 )
 
 __all__ = [
+    "TlsConfig",
     "download_logs",
     "get_device_xml",
     "parse_device_info",

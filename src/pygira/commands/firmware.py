@@ -7,7 +7,7 @@ from typing import cast
 import click
 
 from pygira import api as api_mod
-from pygira.context import console, die, resolve_login
+from pygira.context import console, resolve_login
 from pygira.core.types import DeviceType
 from pygira.options import common_options
 
@@ -38,16 +38,13 @@ def check_update(
     timeout: float,
 ) -> None:
     """Check if an online firmware update is available."""
-    try:
-        device_type, client = _client(ip, password, username, timeout)
-        result = (
-            client.get_firmware_status()
-            if device_type == DeviceType.X1
-            else client.check_online_update()
-        )
-        console.print_json(json.dumps(result))
-    except Exception as e:
-        die(e)
+    device_type, client = _client(ip, password, username, timeout)
+    result = (
+        client.get_firmware_status()
+        if device_type == DeviceType.X1
+        else client.check_online_update()
+    )
+    console.print_json(json.dumps(result))
 
 
 @click.command()
@@ -78,31 +75,28 @@ def upgrade(**kwargs: object) -> None:
         else:
             online = True
 
-    try:
-        _, client = _client(ip, password, username, timeout)
-        if firmware_file:
-            console.print(f"Uploading firmware from {firmware_file!r}…")
-            client.upload_firmware(Path(firmware_file))
-            console.print("Upload complete. Triggering install…")
-            result = client.initiate_local_install()
-            console.print_json(json.dumps(result))
-        else:
-            console.print("Starting online firmware update…")
-            result = client.trigger_online_update()
-            console.print_json(json.dumps(result))
+    _, client = _client(ip, password, username, timeout)
+    if firmware_file:
+        console.print(f"Uploading firmware from {firmware_file!r}…")
+        client.upload_firmware(Path(firmware_file))
+        console.print("Upload complete. Triggering install…")
+        result = client.initiate_local_install()
+        console.print_json(json.dumps(result))
+    else:
+        console.print("Starting online firmware update…")
+        result = client.trigger_online_update()
+        console.print_json(json.dumps(result))
 
-        if no_wait:
-            return
-        console.print("Waiting for update to complete (up to 5 min)…")
-        done = client.wait_for_completion()
-        if done:
-            console.print("[green]Firmware update completed.[/green]")
-        else:
-            console.print(
-                "[yellow]Timed out waiting for completion — device may still be updating.[/yellow]",
-            )
-    except Exception as e:
-        die(e)
+    if no_wait:
+        return
+    console.print("Waiting for update to complete (up to 5 min)…")
+    done = client.wait_for_completion()
+    if done:
+        console.print("[green]Firmware update completed.[/green]")
+    else:
+        console.print(
+            "[yellow]Timed out waiting for completion — device may still be updating.[/yellow]",
+        )
 
 
 @click.command("commissioning-test")
@@ -114,12 +108,9 @@ def commissioning_test(
     timeout: float,
 ) -> None:
     """Run the built-in commissioning test."""
-    try:
-        _, client = _client(ip, password, username, timeout)
-        result = client.commissioning_test()
-        console.print_json(json.dumps(result))
-    except Exception as e:
-        die(e)
+    _, client = _client(ip, password, username, timeout)
+    result = client.commissioning_test()
+    console.print_json(json.dumps(result))
 
 
 @click.command("enable-ssh")
@@ -138,13 +129,10 @@ def enable_ssh(
     persistent: bool,
 ) -> None:
     """Enable SSH access on the device."""
-    try:
-        _, client = _client(ip, password, username, timeout)
-        client.enable_ssh(persistent=persistent)
-        mode = "persistent" if persistent else "one-time"
-        console.print(f"[green]SSH enabled ({mode}).[/green]")
-    except Exception as e:
-        die(e)
+    _, client = _client(ip, password, username, timeout)
+    client.enable_ssh(persistent=persistent)
+    mode = "persistent" if persistent else "one-time"
+    console.print(f"[green]SSH enabled ({mode}).[/green]")
 
 
 @click.command("disable-ssh")
@@ -156,12 +144,9 @@ def disable_ssh(
     timeout: float,
 ) -> None:
     """Stop sshd and remove the persistent SSH-enable marker."""
-    try:
-        _, client = _client(ip, password, username, timeout)
-        client.disable_ssh()
-        console.print("[green]SSH disabled.[/green]")
-    except Exception as e:
-        die(e)
+    _, client = _client(ip, password, username, timeout)
+    client.disable_ssh()
+    console.print("[green]SSH disabled.[/green]")
 
 
 def register(main: click.Group) -> None:

@@ -1,12 +1,14 @@
 """Minimal stdlib HTTP client — the small slice of httpx this project used.
 
-Why: httpx is pre-1.0 (no stable API). We only used sync Client with cookie
-persistence (the session-login handshake depends on it), verify=False for the
-device's self-signed TLS, basic auth, and .json()/.content/.raise_for_status().
-That maps cleanly onto urllib + http.cookiejar + ssl, so no third-party dep.
+Why: httpx is pre-1.0 (no stable API). The project needs a synchronous client
+with cookie persistence, configurable TLS contexts and certificate pinning,
+basic auth, and .json()/.content/.raise_for_status(). That maps cleanly onto
+urllib + http.cookiejar + ssl, so no third-party dependency is required.
 """
 
 import base64
+import hashlib
+import hmac
 import json as _json
 import ssl
 import urllib.error
@@ -16,15 +18,18 @@ from types import TracebackType
 from typing import Literal, cast
 from urllib.parse import urlencode
 
+from pygira.exceptions import InvalidInputError, TransportError
+
 
 # ponytail: one exception type. raise_for_status (HTTP 4xx/5xx) and transport
 # failures (connection refused, timeout) both raise this — matches the single
 # `except httpx.HTTPError` the callers rely on.
-class HTTPError(Exception):
+class HTTPError(TransportError):
     """Request failed (connection error or, via raise_for_status, 4xx/5xx)."""
 
 
 HTTP_ERROR_STATUS = 400
+SHA256_HEX_LENGTH = 64
 
 _UNVERIFIED = ssl.create_default_context()
 _UNVERIFIED.check_hostname = False
@@ -48,12 +53,13 @@ class Response:
 class Client:
     """Context-managed session. Cookies persist across requests on one instance."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - mirrors the small supported HTTP option surface
         self,
         base_url: str = "",
         headers: dict | None = None,
         auth: tuple[str, str] | None = None,
-        verify: bool = True,
+        verify: bool | ssl.SSLContext = True,
+        certificate_fingerprint: str | None = None,
         timeout: float = 30.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -62,12 +68,42 @@ class Client:
         if auth is not None:
             token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
             self._headers.setdefault("Authorization", f"Basic {token}")
+        self._certificate_fingerprint = self._normalize_fingerprint(certificate_fingerprint)
         handlers: list[urllib.request.BaseHandler] = [
             urllib.request.HTTPCookieProcessor(CookieJar()),
         ]
-        if not verify:
+        if isinstance(verify, ssl.SSLContext):
+            handlers.append(urllib.request.HTTPSHandler(context=verify))
+        elif not verify:
             handlers.append(urllib.request.HTTPSHandler(context=_UNVERIFIED))
         self._opener = urllib.request.build_opener(*handlers)
+
+    @staticmethod
+    def _normalize_fingerprint(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.removeprefix("sha256:").replace(":", "").lower()
+        if len(normalized) != SHA256_HEX_LENGTH or any(
+            char not in "0123456789abcdef" for char in normalized
+        ):
+            msg = "certificate fingerprint must be a SHA-256 hex digest"
+            raise InvalidInputError(msg)
+        return normalized
+
+    def _validate_peer_certificate(self, response: object) -> None:
+        if self._certificate_fingerprint is None:
+            return
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is None or not hasattr(sock, "getpeercert"):
+            msg = "could not inspect the TLS peer certificate for fingerprint pinning"
+            raise TransportError(msg)
+        certificate = sock.getpeercert(binary_form=True)
+        actual = hashlib.sha256(certificate).hexdigest()
+        if not hmac.compare_digest(actual, self._certificate_fingerprint):
+            msg = f"TLS certificate fingerprint mismatch (received sha256:{actual})"
+            raise TransportError(msg)
 
     def __enter__(self: "Client") -> "Client":
         return self
@@ -105,6 +141,7 @@ class Client:
         )
         try:
             with self._opener.open(req, timeout=self.timeout) as resp:
+                self._validate_peer_certificate(resp)
                 return Response(resp.status, resp.read())
         except urllib.error.HTTPError as e:
             # 4xx/5xx: a response, not a failure yet — surfaced via raise_for_status.

@@ -14,9 +14,13 @@ def test_public_api_exports_library_entry_points() -> None:
     assert pygira.X1.__name__ == "X1"
     assert pygira.ApiClient.__name__ == "ApiClient"
     assert pygira.GdsClient.__name__ == "GdsClient"
+    assert pygira.TlsConfig.__name__ == "TlsConfig"
+    assert pygira.DiagnosticPage.__name__ == "DiagnosticPage"
+    assert pygira.TksConnectionStatus.__name__ == "TksConnectionStatus"
     assert issubclass(pygira.AuthenticationError, pygira.PygiraError)
     assert issubclass(pygira.DeviceApiError, pygira.PygiraError)
     assert issubclass(pygira.TransportError, pygira.PygiraError)
+    assert issubclass(pygira.InvalidInputError, ValueError)
     assert issubclass(pygira.UnsupportedCapabilityError, pygira.PygiraError)
     assert pygira.__version__
 

@@ -18,7 +18,6 @@ from pygira import config_service as cs
 from pygira import weather as weather_mod
 from pygira.context import (
     console,
-    die,
     require_capability,
     resolve_login,
     resolve_tks_ip,
@@ -26,6 +25,7 @@ from pygira.context import (
 )
 from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
+from pygira.exceptions import UnsupportedCapabilityError
 from pygira.gds import GdsClient, run_gds
 from pygira.options import common_options
 from pygira.tks_web import TksWebClient
@@ -50,7 +50,7 @@ def _tks_login_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
 def _require_x1(profile: DeviceProfile, command_name: str) -> None:
     if profile.device_type != DeviceType.X1:
         msg = f"{command_name} is supported on X1 only"
-        raise RuntimeError(msg)
+        raise UnsupportedCapabilityError(msg)
 
 
 def register(main: click.Group) -> None:
@@ -88,17 +88,14 @@ def _register_set_tks(main: click.Group) -> None:
         async def _do(client: GdsClient) -> None:
             await client.configure_tks(tks_ip, tks_user, tks_pass)
 
-        try:
-            profile, ip, username, password = resolve_login(
-                cast("str | None", kwargs.get("ip")),
-                cast("str | None", kwargs.get("username")),
-                cast("str | None", kwargs.get("password")),
-            )
-            require_capability(profile, tks=True)
-            run_gds(ip, username, password, _do, timeout=cast("float", kwargs["timeout"]))
-            console.print("[green]TKS-IP gateway configured.[/green]")
-        except Exception as e:
-            die(e)
+        profile, ip, username, password = resolve_login(
+            cast("str | None", kwargs.get("ip")),
+            cast("str | None", kwargs.get("username")),
+            cast("str | None", kwargs.get("password")),
+        )
+        require_capability(profile, tks=True)
+        run_gds(ip, username, password, _do, timeout=cast("float", kwargs["timeout"]))
+        console.print("[green]TKS-IP gateway configured.[/green]")
 
 
 def _register_tks_web(main: click.Group) -> None:
@@ -120,41 +117,35 @@ def _register_tks_web(main: click.Group) -> None:
     )
     def activate_tks_web(tks_ip: str | None, timeout: float, poll_interval: float) -> None:
         """Start the TKS-IP web interface on port 8080."""
-        try:
-            host = resolve_tks_ip(tks_ip)
-            result = cs.activate_tks_webinterface(
-                host,
-                timeout=timeout,
-                poll_interval=poll_interval,
-            )
-            console.print(
-                f"[green]TKS-IP web interface active:[/green] {result.url} "
-                f"(state={result.state}, {result.elapsed_seconds:.1f}s)",
-            )
-        except Exception as e:
-            die(e)
+        host = resolve_tks_ip(tks_ip)
+        result = cs.activate_tks_webinterface(
+            host,
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
+        console.print(
+            f"[green]TKS-IP web interface active:[/green] {result.url} "
+            f"(state={result.state}, {result.elapsed_seconds:.1f}s)",
+        )
 
     @main.command("tks-status")
     @click.option("--tks-ip", default=None, help="TKS-IP gateway IP address")
     def tks_status(tks_ip: str | None) -> None:
         """Check TKS-IP gateway status without starting the web app."""
-        try:
-            host = resolve_tks_ip(tks_ip)
-            status = cs.get_tks_status(host)
-            if not status.bootstrap_reachable:
-                console.print(f"[red]Gateway unreachable[/red] at {host}")
-            elif status.app_running:
-                console.print(
-                    f"[green]Web app running[/green] "
-                    f"(state={status.state_code} — {status.state_description})",
-                )
-            else:
-                console.print(
-                    "[yellow]Bootstrap daemon reachable, web app not running[/yellow] "
-                    "— run 'activate-tks-web' to start it",
-                )
-        except Exception as e:
-            die(e)
+        host = resolve_tks_ip(tks_ip)
+        status = cs.get_tks_status(host)
+        if not status.bootstrap_reachable:
+            console.print(f"[red]Gateway unreachable[/red] at {host}")
+        elif status.app_running:
+            console.print(
+                f"[green]Web app running[/green] "
+                f"(state={status.state_code} — {status.state_description})",
+            )
+        else:
+            console.print(
+                "[yellow]Bootstrap daemon reachable, web app not running[/yellow] "
+                "— run 'activate-tks-web' to start it",
+            )
 
 
 def _register_tks_backup_save(main: click.Group) -> None:
@@ -183,17 +174,14 @@ def _register_tks_backup_save(main: click.Group) -> None:
         output: str | None,
     ) -> None:
         """Download a configuration backup from the TKS-IP gateway."""
-        try:
-            host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-            client = TksWebClient(host)
-            client.login(user, pw)
-            data = client.backup_save()
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            out = output or f"tks-backup-{host.replace('.', '-')}-{ts}.img"
-            Path(out).write_bytes(data)
-            console.print(f"[green]Backup saved to {out!r} ({len(data):,} bytes)[/green]")
-        except Exception as e:
-            die(e)
+        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
+        client = TksWebClient(host)
+        client.login(user, pw)
+        data = client.backup_save()
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        out = output or f"tks-backup-{host.replace('.', '-')}-{ts}.img"
+        Path(out).write_bytes(data)
+        console.print(f"[green]Backup saved to {out!r} ({len(data):,} bytes)[/green]")
 
 
 def _register_tks_backup_restore(main: click.Group) -> None:
@@ -214,14 +202,11 @@ def _register_tks_backup_restore(main: click.Group) -> None:
                 "This will overwrite the TKS-IP gateway's current configuration. Continue?",
                 abort=True,
             )
-        try:
-            host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-            client = TksWebClient(host)
-            client.login(user, pw)
-            client.backup_restore(Path(backup_file).read_bytes(), Path(backup_file).name)
-            console.print("[green]Restore triggered.[/green]")
-        except Exception as e:
-            die(e)
+        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
+        client = TksWebClient(host)
+        client.login(user, pw)
+        client.backup_restore(Path(backup_file).read_bytes(), Path(backup_file).name)
+        console.print("[green]Restore triggered.[/green]")
 
 
 def _register_tks_firmware_update(main: click.Group) -> None:
@@ -242,14 +227,11 @@ def _register_tks_firmware_update(main: click.Group) -> None:
                 "This will update the TKS-IP gateway's firmware. Continue?",
                 abort=True,
             )
-        try:
-            host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-            client = TksWebClient(host)
-            client.login(user, pw)
-            client.firmware_update(Path(firmware_file).read_bytes(), Path(firmware_file).name)
-            console.print("[green]Firmware update triggered.[/green]")
-        except Exception as e:
-            die(e)
+        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
+        client = TksWebClient(host)
+        client.login(user, pw)
+        client.firmware_update(Path(firmware_file).read_bytes(), Path(firmware_file).name)
+        console.print("[green]Firmware update triggered.[/green]")
 
 
 def _register_weather(main: click.Group) -> None:
@@ -272,21 +254,17 @@ def _register_weather(main: click.Group) -> None:
         zip_code = str(kwargs["zip_code"])
         country = str(kwargs["country"])
         timeout = cast("float", kwargs["timeout"])
-        try:
-            profile, ip, username, password = resolve_login(
-                cast("str | None", kwargs.get("ip")),
-                cast("str | None", kwargs.get("username")),
-                cast("str | None", kwargs.get("password")),
-            )
-            require_capability(profile, weather=True)
-            station = weather_mod.find_station(zip_code, country)
-            if not station:
-                die(f"No weather station found for zip {zip_code!r} in {country!r}")
-            console.print(f"Found station: [bold]{station.label}[/bold] ({station.station_id})")
-        except SystemExit:
-            raise
-        except Exception as e:
-            die(e)
+        profile, ip, username, password = resolve_login(
+            cast("str | None", kwargs.get("ip")),
+            cast("str | None", kwargs.get("username")),
+            cast("str | None", kwargs.get("password")),
+        )
+        require_capability(profile, weather=True)
+        station = weather_mod.find_station(zip_code, country)
+        if not station:
+            msg = f"No weather station found for zip {zip_code!r} in {country!r}"
+            raise click.ClickException(msg)
+        console.print(f"Found station: [bold]{station.label}[/bold] ({station.station_id})")
 
         if not station.guid:
             station.guid = str(uuid.uuid4())
@@ -307,11 +285,8 @@ def _register_weather(main: click.Group) -> None:
         async def _do(client: GdsClient) -> None:
             await client.set_app_value("Gira.G1", "weather.settings", settings_json)
 
-        try:
-            run_gds(ip, username, password, _do, timeout=timeout)
-            console.print("[green]Weather station configured.[/green]")
-        except Exception as e:
-            die(e)
+        run_gds(ip, username, password, _do, timeout=timeout)
+        console.print("[green]Weather station configured.[/green]")
 
 
 def _api_client(
@@ -340,12 +315,9 @@ def _register_basic_maintenance(main: click.Group) -> None:
         timeout: float,
     ) -> None:
         """Restart the device."""
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            _api_client(profile, ip, username, password, timeout).reboot()
-            console.print("[green]Restart command sent.[/green]")
-        except Exception as e:
-            die(e)
+        profile, ip, username, password = resolve_login(ip, username, password)
+        _api_client(profile, ip, username, password, timeout).reboot()
+        console.print("[green]Restart command sent.[/green]")
 
     @main.command("factory-reset")
     @common_options
@@ -361,19 +333,16 @@ def _register_basic_maintenance(main: click.Group) -> None:
         if not confirm:
             click.confirm("This will erase all configuration. Continue?", abort=True)
 
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            if profile.device_type == DeviceType.X1:
-                _api_client(profile, ip, username, password, timeout).factory_reset()
-            else:
+        profile, ip, username, password = resolve_login(ip, username, password)
+        if profile.device_type == DeviceType.X1:
+            _api_client(profile, ip, username, password, timeout).factory_reset()
+        else:
 
-                async def _do(client: GdsClient) -> None:
-                    await client.factory_reset()
+            async def _do(client: GdsClient) -> None:
+                await client.factory_reset()
 
-                run_gds(ip, username, password, _do, timeout=timeout)
-            console.print("[green]Factory reset command sent.[/green]")
-        except Exception as e:
-            die(e)
+            run_gds(ip, username, password, _do, timeout=timeout)
+        console.print("[green]Factory reset command sent.[/green]")
 
 
 def _register_pull_logs(main: click.Group) -> None:
@@ -388,23 +357,20 @@ def _register_pull_logs(main: click.Group) -> None:
         output: str,
     ) -> None:
         """Download diagnostic log bundle from the device."""
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            if profile.device_type == DeviceType.X1:
-                data = cs.download_logs_x1(ip, username, password, timeout=timeout)
-            else:
-                client = api_mod.ApiClient(
-                    ip,
-                    username,
-                    password,
-                    api_prefix=profile.api_prefix,
-                    timeout=timeout,
-                )
-                data = client.get_logfile()
-            Path(output).write_bytes(data)
-            console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
-        except Exception as e:
-            die(e)
+        profile, ip, username, password = resolve_login(ip, username, password)
+        if profile.device_type == DeviceType.X1:
+            data = cs.download_logs_x1(ip, username, password, timeout=timeout)
+        else:
+            client = api_mod.ApiClient(
+                ip,
+                username,
+                password,
+                api_prefix=profile.api_prefix,
+                timeout=timeout,
+            )
+            data = client.get_logfile()
+        Path(output).write_bytes(data)
+        console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
 
 
 def _fetch_tail_logs(
@@ -474,7 +440,7 @@ def _register_tail_logs(main: click.Group) -> None:
         files = cast("tuple[str, ...]", kwargs["files"])
         lines = cast("int", kwargs["lines"])
 
-        try:
+        with suppress(KeyboardInterrupt, click.exceptions.Abort):
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
                 cast("str | None", kwargs.get("username")),
@@ -490,10 +456,6 @@ def _register_tail_logs(main: click.Group) -> None:
                 time.sleep(interval)
                 data = _fetch_tail_logs(profile, ip, username, password, timeout)
                 _print_new_lines(_text_files(data, files), seen, 0)
-        except (KeyboardInterrupt, click.exceptions.Abort):
-            pass
-        except Exception as e:
-            die(e)
 
 
 def _register_logging_commands(main: click.Group) -> None:
@@ -514,18 +476,15 @@ def _register_logging_commands(main: click.Group) -> None:
         mode: str,
     ) -> None:
         """Set X1 logging verbosity."""
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            _require_x1(profile, "set-logging")
+        profile, ip, username, password = resolve_login(ip, username, password)
+        _require_x1(profile, "set-logging")
 
-            severity = 0 if mode.lower() == "extended" else NORMAL_SYSLOG_SEVERITY
-            cs.set_syslog_severity_x1(ip, username, password, severity, timeout=timeout)
-            if severity == 0:
-                console.print("[green]Extended logging enabled.[/green]")
-            else:
-                console.print("[green]Extended logging disabled (normal mode).[/green]")
-        except Exception as e:
-            die(e)
+        severity = 0 if mode.lower() == "extended" else NORMAL_SYSLOG_SEVERITY
+        cs.set_syslog_severity_x1(ip, username, password, severity, timeout=timeout)
+        if severity == 0:
+            console.print("[green]Extended logging enabled.[/green]")
+        else:
+            console.print("[green]Extended logging disabled (normal mode).[/green]")
 
     @main.command("get-logging")
     @common_options
@@ -536,15 +495,12 @@ def _register_logging_commands(main: click.Group) -> None:
         timeout: float,
     ) -> None:
         """Show X1 logging verbosity mode."""
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            _require_x1(profile, "get-logging")
+        profile, ip, username, password = resolve_login(ip, username, password)
+        _require_x1(profile, "get-logging")
 
-            severity = cs.get_syslog_severity_x1(ip, username, password, timeout=timeout)
-            mode = "extended" if severity < NORMAL_SYSLOG_SEVERITY else "normal"
-            console.print(f"Logging mode: [bold]{mode}[/bold] (SyslogSeverity={severity})")
-        except Exception as e:
-            die(e)
+        severity = cs.get_syslog_severity_x1(ip, username, password, timeout=timeout)
+        mode = "extended" if severity < NORMAL_SYSLOG_SEVERITY else "normal"
+        console.print(f"Logging mode: [bold]{mode}[/bold] (SyslogSeverity={severity})")
 
 
 def _register_x1_program_commands(main: click.Group) -> None:
@@ -567,16 +523,13 @@ def _register_x1_program_commands(main: click.Group) -> None:
         async def _do(client: GdsClient) -> list[object]:
             return await client.get_ui_configuration()
 
-        try:
-            profile, ip, username, password = resolve_login(ip, username, password)
-            _require_x1(profile, "x1-export-program")
-            config = run_gds(ip, username, password, _do, timeout=timeout)
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            out = output or f"x1-program-{ip.replace('.', '-')}-{ts}.json"
-            Path(out).write_text(json.dumps(config, indent=2))
-            console.print(f"[green]Program saved to {out!r} ({len(config)} entries)[/green]")
-        except Exception as e:
-            die(e)
+        profile, ip, username, password = resolve_login(ip, username, password)
+        _require_x1(profile, "x1-export-program")
+        config = run_gds(ip, username, password, _do, timeout=timeout)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        out = output or f"x1-program-{ip.replace('.', '-')}-{ts}.json"
+        Path(out).write_text(json.dumps(config, indent=2))
+        console.print(f"[green]Program saved to {out!r} ({len(config)} entries)[/green]")
 
     @main.command("x1-import-program")
     @common_options
@@ -598,17 +551,18 @@ def _register_x1_program_commands(main: click.Group) -> None:
 
         try:
             config = json.loads(Path(program_file).read_text())
-            profile, ip, username, password = resolve_login(
-                cast("str | None", kwargs.get("ip")),
-                cast("str | None", kwargs.get("username")),
-                cast("str | None", kwargs.get("password")),
-            )
-            _require_x1(profile, "x1-import-program")
+        except json.JSONDecodeError as exc:
+            msg = f"invalid program JSON: {exc.msg}"
+            raise click.BadParameter(msg, param_hint="program_file") from exc
+        profile, ip, username, password = resolve_login(
+            cast("str | None", kwargs.get("ip")),
+            cast("str | None", kwargs.get("username")),
+            cast("str | None", kwargs.get("password")),
+        )
+        _require_x1(profile, "x1-import-program")
 
-            async def _do(client: GdsClient) -> None:
-                await client.set_ui_configuration(config)
+        async def _do(client: GdsClient) -> None:
+            await client.set_ui_configuration(config)
 
-            run_gds(ip, username, password, _do, timeout=timeout)
-            console.print("[green]Program applied.[/green]")
-        except Exception as e:
-            die(e)
+        run_gds(ip, username, password, _do, timeout=timeout)
+        console.print("[green]Program applied.[/green]")

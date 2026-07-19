@@ -15,7 +15,7 @@ class PygiraGroup(click.Group):
         """Invoke a command and render expected library failures for CLI users."""
         try:
             return super().invoke(ctx)
-        except PygiraError as exc:
+        except (PygiraError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
 

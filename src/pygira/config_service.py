@@ -4,19 +4,41 @@ Auth: Authorization: basic <base64(user:password)>  (lowercase "basic")
 """
 
 import base64
-import hashlib
 import re
+import ssl
 import time
 from dataclasses import dataclass
-from typing import Any, cast
 
 from lxml import etree
 
 from pygira import _http as httpx
+from pygira.auth import authenticated_request
+from pygira.exceptions import (
+    DeviceApiError,
+    InvalidInputError,
+    OperationTimeoutError,
+    ProtocolError,
+)
 from pygira.models import DeviceInfo, NetworkConfig
 
 NS = "http://service.schema.gira.de/configuration"
 NSMAP = {"conf": NS}
+_ISCSERVICE_PROTOCOL = "iscwebservice"
+_TKS_PROTOCOL = "TKS-IP"
+
+
+@dataclass(frozen=True)
+class TlsConfig:
+    """TLS verification and optional SHA-256 certificate pinning."""
+
+    verify: bool = False
+    ssl_context: ssl.SSLContext | None = None
+    certificate_fingerprint: str | None = None
+
+    @property
+    def verify_argument(self) -> bool | ssl.SSLContext:
+        """Return the verification value expected by the HTTP transport."""
+        return self.ssl_context or self.verify
 
 
 def _auth_header(username: str, password: str) -> str:
@@ -24,11 +46,20 @@ def _auth_header(username: str, password: str) -> str:
     return f"basic {token}"
 
 
-def _make_client(host: str, username: str, password: str, timeout: float = 30.0) -> httpx.Client:
+def _make_client(
+    host: str,
+    username: str,
+    password: str,
+    timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
+) -> httpx.Client:
+    tls = tls or TlsConfig()
     return httpx.Client(
         base_url=f"https://{host}:4433",
         headers={"Authorization": _auth_header(username, password)},
-        verify=False,
+        verify=tls.verify_argument,
+        certificate_fingerprint=tls.certificate_fingerprint,
         timeout=timeout,
     )
 
@@ -153,7 +184,7 @@ def _poll_tks_state(
         state = _parse_tks_state(resp.content)
         if state == _TKS_ERROR_STATE:
             msg = "TKS-IP web interface reported error state 2"
-            raise RuntimeError(msg)
+            raise ProtocolError(_TKS_PROTOCOL, "activate web interface", state, msg)
     except httpx.HTTPError as exc:
         return last_state, exc
     else:
@@ -163,12 +194,12 @@ def _poll_tks_state(
 def _raise_tks_activation_error(last_state: str | None, last_error: Exception | None) -> None:
     if last_state is not None:
         msg = f"TKS-IP web interface did not start; last state was {last_state!r}"
-        raise RuntimeError(msg)
+        raise OperationTimeoutError(msg)
     if last_error is not None:
         msg = f"TKS-IP web interface did not start: {last_error}"
-        raise RuntimeError(msg) from last_error
+        raise OperationTimeoutError(msg) from last_error
     msg = "TKS-IP web interface did not start"
-    raise RuntimeError(msg)
+    raise OperationTimeoutError(msg)
 
 
 def activate_tks_webinterface(
@@ -180,10 +211,10 @@ def activate_tks_webinterface(
     """Start the TKS-IP web interface on port 8080 via the port-80 bootstrap hook."""
     if timeout <= 0:
         msg = "timeout must be positive"
-        raise ValueError(msg)
+        raise InvalidInputError(msg)
     if poll_interval <= 0:
         msg = "poll_interval must be positive"
-        raise ValueError(msg)
+        raise InvalidInputError(msg)
     started = _start_tks_webinterface(host, timeout)
     return _poll_tks_webinterface(host, started, timeout, poll_interval)
 
@@ -193,9 +224,11 @@ def get_device_xml(
     username: str,
     password: str,
     timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
 ) -> etree._Element:
     """Fetch and parse the device configuration XML from the configurationservice."""
-    with _make_client(host, username, password, timeout=timeout) as client:
+    with _make_client(host, username, password, timeout=timeout, tls=tls) as client:
         resp = client.get("/service")
         resp.raise_for_status()
     return etree.fromstring(resp.content)
@@ -239,16 +272,18 @@ def set_ip_config(root: etree._Element, cfg: NetworkConfig) -> None:
         set_text("SecondaryDNS", cfg.secondary_dns)
 
 
-def push_device_xml(
+def push_device_xml(  # noqa: PLR0913 - explicit connection and TLS options
     host: str,
     username: str,
     password: str,
     root: etree._Element,
     timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
 ) -> None:
     """Upload the modified configuration XML back to the device via PUT."""
     body = etree.tostring(root, xml_declaration=True, encoding="utf-8")
-    with _make_client(host, username, password, timeout=timeout) as client:
+    with _make_client(host, username, password, timeout=timeout, tls=tls) as client:
         resp = client.put(
             "/service",
             content=body,
@@ -257,48 +292,19 @@ def push_device_xml(
         resp.raise_for_status()
 
 
-def download_logs(host: str, username: str, password: str, timeout: float = 30.0) -> bytes:
+def download_logs(
+    host: str,
+    username: str,
+    password: str,
+    timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
+) -> bytes:
     """Download the diagnostic log bundle from the device."""
-    with _make_client(host, username, password, timeout=timeout) as client:
+    with _make_client(host, username, password, timeout=timeout, tls=tls) as client:
         resp = client.get("/discovery/download/logfiles")
         resp.raise_for_status()
     return resp.content
-
-
-def _ws_payload(command: str, data: dict | None = None) -> dict:
-    payload = {"command": command, "keepAlive": True}
-    if data is not None:
-        payload["data"] = data
-    return payload
-
-
-def _sha256_hex_upper(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest().upper()
-
-
-def _sha256_hex(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()
-
-
-def _gds1_password_hash(password: str, salt: str) -> str:
-    # Web UI implementation for version "GDS_1":
-    # base64(sha256(utf8(password)+salt)).substring(0, 43)
-    digest = hashlib.sha256((password + salt).encode("utf-8")).digest()
-    return base64.b64encode(digest).decode()[:43]
-
-
-def _legacy_password_hash(password: str, salt: str) -> str:
-    # version "1": sha256(sha256(password) + "+" + salt)
-    first = _sha256_hex(password)
-    return _sha256_hex(f"{first}+{salt}")
-
-
-def _compute_auth_token(password: str, salt: str, session_salt: str, version: str) -> str:
-    if version == "GDS_1":
-        password_hash = _gds1_password_hash(password, salt)
-    else:
-        password_hash = _legacy_password_hash(password, salt)
-    return _sha256_hex_upper(f"{password_hash}+{session_salt}")
 
 
 def _x1_session_request(
@@ -308,62 +314,59 @@ def _x1_session_request(
     command: str,
     data: dict | None = None,
 ) -> dict:
-    salt_resp = client.post(
+    return authenticated_request(
+        client,
         "/webservice",
-        json=_ws_payload("getPasswordSalt", {"username": username}),
+        username,
+        password,
+        command,
+        data,
     )
-    salt_resp.raise_for_status()
-    salt_data = cast("dict[str, Any]", salt_resp.json())
-    session_data = salt_data.get("data") or {}
-    salt = session_data.get("salt")
-    session_salt = session_data.get("sessionSalt")
-    version = session_data.get("version", "1")
-    if not salt or not session_salt:
-        error = salt_data.get("error", "unknown")
-        error_id = salt_data.get("id", "n/a")
-        msg = f"X1 session init failed ({error}/{error_id})"
-        raise RuntimeError(msg)
 
-    token = _compute_auth_token(password, salt, session_salt, version)
-    auth_resp = client.post(
-        "/webservice",
-        json=_ws_payload("doAuthenticateSession", {"username": username, "token": token}),
+
+def _make_x1_client(host: str, timeout: float, tls: TlsConfig | None) -> httpx.Client:
+    tls = tls or TlsConfig()
+    return httpx.Client(
+        base_url=f"https://{host}",
+        verify=tls.verify_argument,
+        certificate_fingerprint=tls.certificate_fingerprint,
+        timeout=timeout,
     )
-    auth_resp.raise_for_status()
-    auth_data = cast("dict[str, Any]", auth_resp.json())
-    if isinstance(auth_data, dict) and auth_data.get("error"):
-        error = auth_data.get("error", "unknown")
-        error_id = auth_data.get("id", "n/a")
-        msg = f"X1 authentication failed ({error}/{error_id})"
-        raise RuntimeError(msg)
-
-    resp = client.post("/webservice", json=_ws_payload(command, data))
-    resp.raise_for_status()
-    return cast("dict[str, Any]", resp.json())
 
 
-def download_logs_x1(host: str, username: str, password: str, timeout: float = 30.0) -> bytes:
+def download_logs_x1(
+    host: str,
+    username: str,
+    password: str,
+    timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
+) -> bytes:
     """Download log bundle from X1 via /webservice session auth."""
-    with httpx.Client(base_url=f"https://{host}", verify=False, timeout=timeout) as client:
+    with _make_x1_client(host, timeout, tls) as client:
         logs_data = _x1_session_request(client, username, password, "getLogfile")
         content_b64 = (logs_data.get("data") or {}).get("content")
         if not content_b64:
-            error = logs_data.get("error", "unknown")
-            error_id = logs_data.get("id", "n/a")
-            msg = f"X1 logfile fetch failed ({error}/{error_id})"
-            raise RuntimeError(msg)
+            raise ProtocolError(
+                _ISCSERVICE_PROTOCOL,
+                "getLogfile",
+                "missing-content",
+                logs_data,
+            )
         return base64.b64decode(content_b64)
 
 
-def set_syslog_severity_x1(
+def set_syslog_severity_x1(  # noqa: PLR0913 - explicit connection and TLS options
     host: str,
     username: str,
     password: str,
     severity: int,
     timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
 ) -> None:
     """Set X1 syslog severity (0..4), where 4 disables extended logging."""
-    with httpx.Client(base_url=f"https://{host}", verify=False, timeout=timeout) as client:
+    with _make_x1_client(host, timeout, tls) as client:
         resp_data = _x1_session_request(
             client,
             username,
@@ -372,23 +375,37 @@ def set_syslog_severity_x1(
             {"syslogSeverity": severity},
         )
         if isinstance(resp_data, dict) and resp_data.get("error"):
-            error = resp_data.get("error", "unknown")
-            error_id = resp_data.get("id", "n/a")
-            msg = f"X1 setSyslogSeverity failed ({error}/{error_id})"
-            raise RuntimeError(msg)
+            command = "setSyslogSeverity"
+            raise DeviceApiError(command, resp_data)
 
 
-def get_syslog_severity_x1(host: str, username: str, password: str, timeout: float = 30.0) -> int:
+def get_syslog_severity_x1(
+    host: str,
+    username: str,
+    password: str,
+    timeout: float = 30.0,
+    *,
+    tls: TlsConfig | None = None,
+) -> int:
     """Read current X1 syslog severity from device info."""
-    with httpx.Client(base_url=f"https://{host}", verify=False, timeout=timeout) as client:
+    with _make_x1_client(host, timeout, tls) as client:
         resp_data = _x1_session_request(client, username, password, "getDeviceInfo")
         data = (resp_data or {}).get("data") or {}
         value = data.get("SyslogSeverity")
         if value is None:
-            msg = "X1 getDeviceInfo did not include SyslogSeverity"
-            raise RuntimeError(msg)
+            raise ProtocolError(
+                _ISCSERVICE_PROTOCOL,
+                "getDeviceInfo",
+                "missing-field",
+                "response did not include SyslogSeverity",
+            )
         try:
             return int(value)
         except (TypeError, ValueError) as exc:
             msg = f"Invalid SyslogSeverity value: {value!r}"
-            raise RuntimeError(msg) from exc
+            raise ProtocolError(
+                _ISCSERVICE_PROTOCOL,
+                "getDeviceInfo",
+                "invalid-field",
+                msg,
+            ) from exc

@@ -5,16 +5,16 @@ Handles firmware update commands.
 """
 
 import base64
-import hashlib
 import time
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pygira import _http as httpx
-from pygira.exceptions import AuthenticationError, DeviceApiError
-from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
+from pygira.auth import AUTH_ERROR_CODES, authenticated_request
+from pygira.exceptions import DeviceApiError, ProtocolError
+from pygira.models import DeviceInfo, DiagnosticPage, FirmwareStatus, NetworkConfig
 
-_AUTH_ERROR_CODES = {"220", "235"}
+_PROTOCOL = "iscwebservice"
 
 
 def _auth_header(username: str, password: str) -> str:
@@ -60,36 +60,13 @@ class ApiClient:
             resp.raise_for_status()
             data = cast("dict[str, Any]", resp.json() if resp.content else {})
             if data.get("error"):
-                if str(data.get("id", "")) in _AUTH_ERROR_CODES and self.api_prefix in {
+                if str(data.get("id", "")) in AUTH_ERROR_CODES and self.api_prefix in {
                     "/api",
                     "/webservice",
                 }:
                     return self._post_with_session_fallback(payload, data)
                 raise DeviceApiError(command, data)
             return data
-
-    @staticmethod
-    def _sha256_hex(value: str) -> str:
-        return hashlib.sha256(value.encode()).hexdigest()
-
-    @staticmethod
-    def _sha256_hex_upper(value: str) -> str:
-        return hashlib.sha256(value.encode()).hexdigest().upper()
-
-    def _compute_auth_token(self, password: str, salt: str, session_salt: str, version: str) -> str:
-        if version == "GDS_1":
-            digest = hashlib.sha256((password + salt).encode("utf-8")).digest()
-            password_hash = base64.b64encode(digest).decode()[:43]
-        else:
-            first = self._sha256_hex(password)
-            password_hash = self._sha256_hex(f"{first}+{salt}")
-        return self._sha256_hex_upper(f"{password_hash}+{session_salt}")
-
-    def _ws_payload(self, command: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
-        payload: dict[str, Any] = {"command": command, "keepAlive": True}
-        if data is not None:
-            payload["data"] = data
-        return payload
 
     def _post_with_session_fallback(
         self,
@@ -99,52 +76,21 @@ class ApiClient:
         command = str(payload.get("command", "unknown"))
         path = self.api_prefix
         with httpx.Client(base_url=f"http://{self.host}", timeout=self.timeout) as client:
-            salt_resp = client.post(
-                path,
-                json=self._ws_payload("getPasswordSalt", {"username": self.username}),
-            )
-            salt_resp.raise_for_status()
-            salt_data = cast("dict[str, Any]", salt_resp.json() if salt_resp.content else {})
-            session_data = (salt_data or {}).get("data") or {}
-            salt = session_data.get("salt")
-            session_salt = session_data.get("sessionSalt")
-            version = session_data.get("version", "1")
-            if not salt or not session_salt:
-                raise AuthenticationError(command, salt_data or first_error)
-
-            token = self._compute_auth_token(self.password, salt, session_salt, version)
-            auth_resp = client.post(
-                path,
-                json=self._ws_payload(
-                    "doAuthenticateSession",
-                    {"username": self.username, "token": token},
-                ),
-            )
-            auth_resp.raise_for_status()
-            auth_data = cast("dict[str, Any]", auth_resp.json() if auth_resp.content else {})
-            if auth_data.get("error"):
-                raise AuthenticationError(command, auth_data)
-
             retry_data = {k: v for k, v in payload.items() if k != "command"}
             ws_data = (
                 retry_data.get("data")
                 if set(retry_data.keys()) == {"data"}
                 else (retry_data or None)
             )
-            retry_resp = client.post(path, json=self._ws_payload(command, ws_data))
-            retry_resp.raise_for_status()
-            retry_result = cast(
-                "dict[str, Any]",
-                retry_resp.json() if retry_resp.content else {},
+            return authenticated_request(
+                client,
+                path,
+                self.username,
+                self.password,
+                command,
+                ws_data,
+                first_error=first_error,
             )
-            if retry_result.get("error"):
-                error_type = (
-                    AuthenticationError
-                    if str(retry_result.get("id", "")) in _AUTH_ERROR_CODES
-                    else DeviceApiError
-                )
-                raise error_type(command, retry_result)
-            return retry_result
 
     def check_online_update(self) -> dict:
         """Query available online firmware update info."""
@@ -172,6 +118,10 @@ class ApiClient:
     def get_diagnostic_page(self, *, completely: bool = True) -> dict:
         """Fetch diagnostic page data from webservice API."""
         return self._post({"command": "getDiagnosticPage", "data": {"completely": completely}})
+
+    def get_diagnostic_page_model(self, *, completely: bool = True) -> DiagnosticPage:
+        """Fetch and normalize device diagnostic sections."""
+        return DiagnosticPage.from_webservice(self.get_diagnostic_page(completely=completely))
 
     def set_ntp_config(self, *, enabled: bool, server: str, interval_minutes: int) -> dict:
         """Set NTP configuration via webservice API."""
@@ -205,8 +155,12 @@ class ApiClient:
         result = self._post({"command": "getLogfile"})
         content_b64 = ((result or {}).get("data") or {}).get("content")
         if not content_b64:
-            msg = f"getLogfile returned no content: {result}"
-            raise RuntimeError(msg)
+            raise ProtocolError(
+                _PROTOCOL,
+                "getLogfile",
+                "missing-content",
+                result,
+            )
         return base64.b64decode(content_b64)
 
     def trigger_online_update(self) -> dict:
@@ -245,8 +199,12 @@ class ApiClient:
                 if state in ("done", "completed", "finished", "success"):
                     return True
                 if state in ("error", "failed"):
-                    error_msg = f"Firmware update failed: {resp}"
-                    raise RuntimeError(error_msg)
+                    raise ProtocolError(
+                        _PROTOCOL,
+                        "progress",
+                        state,
+                        resp,
+                    )
             except httpx.HTTPError:
                 # Device may be rebooting
                 pass

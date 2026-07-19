@@ -25,5 +25,15 @@
       "isDownloading": true,
       "progress": 42
     }
+  },
+  "diagnostic_page_response": {
+    "data": {
+      "diagnosticpage": [
+        {
+          "title": "diagnostic.titles.system",
+          "blob": "Linux sanitized-x1 5.x"
+        }
+      ]
+    }
   }
 }

@@ -30,11 +30,13 @@ from typing import TYPE_CHECKING, Any, cast
 from lxml import html as lxml_html
 
 from pygira import _http as httpx
+from pygira.exceptions import AuthenticationError, OperationTimeoutError, ProtocolError
 
 if TYPE_CHECKING:
     from lxml.html import HtmlElement
 
 HTML_BODY_COMMAND_MIN_PARTS = 4
+_PROTOCOL = "TKS-IP"
 
 _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
 
@@ -50,11 +52,11 @@ def _find_widget_id(html: str, css_class: str) -> str:
     containers = cast("list[HtmlElement]", tree.xpath(f'//*[@class="{css_class}"]'))
     if not containers:
         msg = f"TKS-IP widget with class {css_class!r} not found"
-        raise RuntimeError(msg)
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-widget", msg)
     controls = cast("list[HtmlElement]", containers[0].xpath(".//div[@id][button or input]"))
     if not controls:
         msg = f"no control found under TKS-IP widget class {css_class!r}"
-        raise RuntimeError(msg)
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-control", msg)
     widget_id = controls[0].get("id")
     assert widget_id is not None
     return widget_id
@@ -87,7 +89,7 @@ class TksWebClient:
         match = _SID_RE.search(resp.content.decode(errors="replace"))
         if not match:
             msg = "could not find session id in TKS-IP root page"
-            raise RuntimeError(msg)
+            raise ProtocolError(_PROTOCOL, "connect", "missing-session", msg)
         self._sid = match.group(1)
 
     def _send(self, data: list[object]) -> list[Any]:
@@ -114,7 +116,7 @@ class TksWebClient:
             ):
                 return cmd[3][0]
         msg = "no HTML body in TKS-IP command response"
-        raise RuntimeError(msg)
+        raise ProtocolError(_PROTOCOL, "reload", "missing-body", msg)
 
     def reload(self) -> str:
         """Send a reload and return the main content HTML."""
@@ -154,10 +156,12 @@ class TksWebClient:
             html = self.reload()
             try:
                 _find_widget_id(html, "lLLoginButton")
-            except RuntimeError:
+            except ProtocolError:
                 return  # login page no longer shown -> logged in
         msg = "TKS-IP login failed or timed out — check tks_ip credentials"
-        raise RuntimeError(msg)
+        command = "TKS-IP login"
+        response = {"id": "timeout", "error": msg}
+        raise AuthenticationError(command, response)
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""
@@ -173,7 +177,7 @@ class TksWebClient:
             except httpx.HTTPError as exc:
                 last_err = exc
         msg = f"backup file did not become available: {last_err}"
-        raise RuntimeError(msg)
+        raise OperationTimeoutError(msg)
 
     def backup_restore(self, data: bytes, filename: str = "backup.img") -> None:
         """Upload a backup file and trigger restoring it."""

@@ -4,6 +4,7 @@ import uuid
 from typing import Any, cast
 
 from pygira import _http as httpx
+from pygira.exceptions import InvalidInputError
 from pygira.models import WeatherStation
 
 _BASE = "http://homeserver.gira.de/dienste/wetter.xml"
@@ -65,6 +66,6 @@ def find_station(zip_code: str, country_iso2: str = "DE") -> WeatherStation | No
     land_id = get_country_id(country_iso2)
     if not land_id:
         msg = f"Unknown country: {country_iso2!r}"
-        raise ValueError(msg)
+        raise InvalidInputError(msg)
     stations = search_stations(zip_code, land_id)
     return stations[0] if stations else None

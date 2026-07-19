@@ -9,7 +9,13 @@ from pygira.api import ApiClient
 from pygira.core.types import DeviceCapabilities, DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.gds import GdsClient, run_gds
-from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
+from pygira.models import (
+    DeviceInfo,
+    DiagnosticPage,
+    FirmwareStatus,
+    NetworkConfig,
+    TksConnectionStatus,
+)
 
 T = TypeVar("T")
 
@@ -26,7 +32,7 @@ class G1:
     """Unified access to the Gira G1 — iscwebservice (port 80) and GDS WebSocket (port 4432).
 
     Inspection methods return raw dicts/bytes from the device.
-    Control methods raise RuntimeError on device-reported failure.
+    Control methods raise public PygiraError subclasses on operational failure.
     """
 
     def __init__(  # noqa: PLR0913 - explicit connection and TLS options
@@ -75,6 +81,10 @@ class G1:
         """Return the diagnostic page from iscwebservice."""
         return self.api.get_diagnostic_page()
 
+    def diagnostic_page_model(self) -> DiagnosticPage:
+        """Return normalized diagnostic sections."""
+        return self.api.get_diagnostic_page_model()
+
     def logfile(self) -> bytes:
         """Return the diagnostic log bundle from iscwebservice."""
         return self.api.get_logfile()
@@ -102,6 +112,10 @@ class G1:
     def tks_status(self) -> dict[str, object]:
         """Return the live DcsVHsGUI.Connection:State datapoint when available."""
         return self._gds(lambda c: c.get_tks_status())
+
+    def tks_status_model(self) -> TksConnectionStatus:
+        """Return normalized TKS-IP connection state."""
+        return self._gds(lambda c: c.get_tks_status_model())
 
     def device_config(self) -> dict[str, str]:
         """Return the flat GDS ipc device-config dict (~100 keys)."""

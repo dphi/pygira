@@ -42,7 +42,7 @@ PASS = "secret"
 
 EXPECTED_AUTH = "Basic " + base64.b64encode(b"admin:secret").decode()
 SESSION_AUTH_CALL_COUNT = 4
-EXPECTED_MODEL_CALL_COUNT = 2
+EXPECTED_MODEL_CALL_COUNT = 3
 EXPECTED_PROGRESS = 25
 
 
@@ -396,16 +396,28 @@ def test_api_client_returns_normalized_models() -> None:
                 200,
                 json={"data": {"currentVersion": "3.5.63", "progress": "25"}},
             ),
+            Response(
+                200,
+                json={
+                    "data": {
+                        "diagnosticpage": [
+                            {"title": "diagnostic.titles.system", "blob": "Linux test"},
+                        ],
+                    },
+                },
+            ),
         ],
     )
     client = ApiClient(HOST, USER, PASS)
 
     info = client.get_device_info_model()
     status = client.get_firmware_status_model()
+    diagnostics = client.get_diagnostic_page_model()
 
     assert info.ip_address == "192.0.2.10"
     assert status.current_version == "3.5.63"
     assert status.progress == EXPECTED_PROGRESS
+    assert diagnostics.sections[0].title == "diagnostic.titles.system"
     assert len(route.calls) == EXPECTED_MODEL_CALL_COUNT
 
 

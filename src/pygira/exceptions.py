@@ -11,6 +11,10 @@ class TransportError(PygiraError):
     """A network connection or transport operation failed."""
 
 
+class InvalidInputError(PygiraError, ValueError):
+    """A library argument is invalid for the requested operation."""
+
+
 class DeviceDetectionError(PygiraError):
     """The target device family could not be determined or did not match."""
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from pygira.api import ApiClient
 from pygira.core.types import DeviceCapabilities, DeviceType
 from pygira.devices.base import DeviceProfile
-from pygira.models import DeviceInfo, FirmwareStatus, NetworkConfig
+from pygira.models import DeviceInfo, DiagnosticPage, FirmwareStatus, NetworkConfig
 
 PROFILE = DeviceProfile(
     device_type=DeviceType.X1,
@@ -58,6 +58,10 @@ class X1:
     def diagnostic_page(self) -> dict:
         """Free-text diagnostic blob: running processes, system/NTP/IP info."""
         return self.api.get_diagnostic_page()
+
+    def diagnostic_page_model(self) -> DiagnosticPage:
+        """Return normalized diagnostic sections."""
+        return self.api.get_diagnostic_page_model()
 
     def logfile(self) -> bytes:
         """Log bundle as raw bytes (ZIP). Requires session auth."""

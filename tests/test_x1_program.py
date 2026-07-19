@@ -104,6 +104,20 @@ def test_import_aborts_without_confirm(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert result.exit_code != 0
 
 
+def test_import_rejects_invalid_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _fake_login_x1(monkeypatch)
+    program = tmp_path / "invalid.json"
+    program.write_text("{not-json")
+
+    result = CliRunner().invoke(
+        main,
+        ["x1-import-program", *_CREDS, "--confirm", str(program)],
+    )
+
+    assert result.exit_code != 0
+    assert "invalid program JSON" in result.output
+
+
 def test_import_calls_set_ui_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _fake_login_x1(monkeypatch)
     f = tmp_path / "prog.json"

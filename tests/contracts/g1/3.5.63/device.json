@@ -21,5 +21,24 @@
       "state": "idle",
       "progress": "0"
     }
+  },
+  "diagnostic_page_response": {
+    "data": {
+      "diagnosticpage": [
+        {
+          "title": "diagnostic.titles.system",
+          "blob": "Linux sanitized-g1 5.x"
+        },
+        {
+          "title": "diagnostic.titles.memory",
+          "blob": "MemTotal: 1024 kB"
+        }
+      ]
+    }
+  },
+  "tks_connection_status": {
+    "present": true,
+    "state": "registered",
+    "disconnect_reason": null
   }
 }

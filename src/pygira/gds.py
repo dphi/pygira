@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 import websockets
 
 from pygira.exceptions import OperationTimeoutError, ProtocolError, TransportError
+from pygira.models import TksConnectionStatus
 
 T = TypeVar("T")
 
@@ -259,7 +260,7 @@ class GdsClient:
         command = payload.get("command", "")
         try:
             return await asyncio.wait_for(future, timeout=self.timeout)
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             msg = f"No response for GDS command {command!r}"
             raise OperationTimeoutError(msg) from exc
         finally:
@@ -332,6 +333,10 @@ class GdsClient:
             "state": _CONNECTION_STATE.get(state_raw, state_raw),
             "disconnect_reason": _DISCONNECT_REASON.get(reason_raw),
         }
+
+    async def get_tks_status_model(self) -> TksConnectionStatus:
+        """Return the normalized TKS-IP connection status."""
+        return TksConnectionStatus.from_gds(await self.get_tks_status())
 
     async def get_app_value(self, app_name: str, key: str) -> object:
         """Read a persistent app value from GDS."""
@@ -411,7 +416,7 @@ class GdsClient:
         """Return the next unmatched GDS push message."""
         try:
             item = await asyncio.wait_for(self._events.get(), timeout=timeout)
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             msg = "No GDS event received before the deadline"
             raise OperationTimeoutError(msg) from exc
         if item is None:
