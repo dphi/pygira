@@ -12,6 +12,8 @@ wheels/
 
 # Device credentials — never commit
 devices.toml
+.env
+.env.*
 
 # Logs and other temporary files
 .tmp/

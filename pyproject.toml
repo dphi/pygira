@@ -52,6 +52,9 @@ packages = ["src/pygira"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "hardware: opt-in read-only tests against explicitly configured Gira hardware",
+]
 addopts = [
     "--cov=pygira",
     "--cov-report=term-missing",

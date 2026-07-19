@@ -38,11 +38,11 @@ x1.set_ip(
 )
 ```
 
-`G1`, `X1`, `GdsClient`, `NetworkConfig`, `DeviceInfo`, `FirmwareStatus`, `DeviceType`, and
-the pygira exception hierarchy are exported from the package root. `ApiClient` remains
-available for low-level iscwebservice access. Authentication, transport,
-protocol, timeout, capability, and device-detection failures have distinct
-public exception types.
+`G1`, `X1`, `GdsClient`, `TlsConfig`, normalized device/firmware/diagnostic/TKS models,
+`DeviceType`, and the pygira exception hierarchy are exported from the package root.
+`ApiClient` remains available for low-level iscwebservice access. Invalid input,
+authentication, transport, protocol, timeout, capability, and device-detection failures
+have distinct public exception types.
 
 The project is currently beta. Public names exported by `pygira` are the
 compatibility-supported API; modules and names beginning with `_` are internal.
@@ -56,6 +56,26 @@ system CA verification with `G1(..., verify_tls=True)` or provide an `ssl.SSLCon
 GDS requests or push events. It owns WebSocket reads in one dispatcher task, correlates
 responses using echoed request fields, and exposes unmatched messages through `next_event()`
 and `listen()`. Use it as an async context manager so its reader and socket are always closed.
+
+Configuration-service callers can enable system-CA verification, load a private Gira CA into
+an `ssl.SSLContext`, and/or pin the leaf certificate by SHA-256 digest:
+
+```python
+import ssl
+
+from pygira import TlsConfig
+from pygira.config_service import get_device_xml
+
+context = ssl.create_default_context(cafile="gira-ca.pem")
+tls = TlsConfig(
+    ssl_context=context,
+    certificate_fingerprint="sha256:0123...cdef",
+)
+device_xml = get_device_xml("192.168.1.240", "device", "secret", tls=tls)
+```
+
+Certificate pins are checked against the certificate on the HTTP connection itself. Update a
+pin deliberately when device firmware or certificate replacement changes the leaf certificate.
 
 ## Supported device families
 
@@ -193,6 +213,10 @@ All source files must be ruff-clean. Run `uv run ruff check src/ tests/` before 
 
 Supported Python versions are 3.10 through 3.14. CI runs the full quality gate on each supported version. See [CONTRIBUTING.md](CONTRIBUTING.md) for the pull-request checklist.
 
+Optional read-only hardware smoke tests are documented in the contributing guide. They require
+an explicit enable flag and environment-only credentials; the normal test suite never connects
+to hardware.
+
 ## Architecture
 
 ### Two protocols, not one
@@ -228,7 +252,7 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
 
 - `api.py` uses `Basic` (capital B) in the Authorization header.
 - `config_service.py` uses `basic` (lowercase) — different binary, different implementation.
-- Many G1 commands require **session auth** (getPasswordSalt → doAuthenticateSession → retry). `ApiClient._post` handles this automatically via `_post_with_session_fallback` for errors 220/235. Authentication failures raise `AuthenticationError`; other device-reported failures raise `DeviceApiError`.
+- Many G1 and X1 commands require **session auth** (getPasswordSalt → doAuthenticateSession → retry). Both transports use the same cookie-preserving authenticator for errors 220/235. Authentication failures raise `AuthenticationError`; other device-reported failures raise `DeviceApiError`.
 - GDS WebSocket uses WSS (TLS, port 4432). Auth is a query-string token: `ui` + base64(`user:password`) appended to the path `/gds/api`. URL form: `wss://<host>:4432/gds/api?ui<base64>`. Verification is disabled by default because the Gira CA certificate is not publicly distributed; library callers can enable system-CA verification or supply an `ssl.SSLContext` containing the device CA.
 - G1 `getDeviceInfo` without `forceLong` is publicly accessible (no auth). With `forceLong: True`, session auth is required.
 

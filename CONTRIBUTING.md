@@ -33,13 +33,33 @@ and destructive device operations.
 
 All commands follow the same pattern: decorate with `@common_options`, call
 `resolve_login()` first, construct `ApiClient` with `profile.api_prefix`, and
-wrap the body in `try/except Exception as e: die(e)`. Commands are registered
-via `register(main)` in each file under `src/pygira/commands/` and wired in
-`cli.py`.
+let expected `PygiraError` failures reach the top-level CLI boundary. Use
+`click.UsageError` or `click.BadParameter` for invalid command input; do not
+broadly catch programming errors. Commands are registered via `register(main)`
+in each file under `src/pygira/commands/` and wired in `cli.py`.
 
 `resolve_login()` pulls credentials from `devices.toml` when `--name` is
 given, or prompts interactively. G1-only features must call
 `require_capability()` before using the GDS transport.
+
+## Hardware smoke tests
+
+Hardware tests are read-only and disabled unless explicitly enabled. Never put
+device credentials in fixtures, command history, test IDs, or failure messages.
+Configure them through local environment variables:
+
+```bash
+PYGIRA_HARDWARE_TESTS=1 \
+PYGIRA_HARDWARE_DEVICE=g1 \
+PYGIRA_HARDWARE_HOST=192.168.1.240 \
+PYGIRA_HARDWARE_USERNAME=device \
+PYGIRA_HARDWARE_PASSWORD='...' \
+uv run pytest -m hardware tests/integration
+```
+
+The default test suite collects these tests but skips them before any network
+connection. Keep hardware tests non-destructive unless a separate marker and
+an additional explicit opt-in safeguard are introduced.
 
 ## Test infrastructure
 
