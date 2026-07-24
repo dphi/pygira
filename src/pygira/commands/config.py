@@ -28,6 +28,7 @@ class DeviceInput:
     password: str
     app_username: str
     app_password: str
+    aes_key: str
 
     @classmethod
     def from_kwargs(cls, kwargs: dict[str, object]) -> "DeviceInput":
@@ -39,6 +40,7 @@ class DeviceInput:
             password=cast("str", kwargs["password"]),
             app_username=cast("str", kwargs["app_username"]),
             app_password=cast("str", kwargs["app_password"]),
+            aes_key=cast("str", kwargs["aes_key"]),
         )
 
 
@@ -56,6 +58,7 @@ def _device_lines(device: DeviceConfig) -> list[str]:
         "admin_password": device.admin_password,
         "app_username": device.app_username,
         "app_password": device.app_password,
+        "aes_key": device.aes_key,
     }
     return [f"{key} = {_quote(value)}" for key, value in fields.items() if value]
 
@@ -128,6 +131,7 @@ def _build_device(fields: DeviceInput) -> DeviceConfig:
             host=fields.host,
             username=fields.username or "admin",
             password=fields.password,
+            aes_key=fields.aes_key,
         )
     return DeviceConfig(
         type=device_type,
@@ -162,7 +166,9 @@ def validate_config(ctx: click.Context) -> None:
     path = _config_path(ctx)
     try:
         cfg = load_config(path)
-    except (OSError, ValidationError, ValueError) as e:
+    except ValidationError:
+        raise
+    except (OSError, ValueError) as e:
         die(e)
     direct = len(cfg.devices)
     located = sum(len(location.devices) for location in cfg.locations.values())
@@ -179,7 +185,9 @@ def list_devices(ctx: click.Context) -> None:
     path = _config_path(ctx)
     try:
         cfg = load_config(path)
-    except (OSError, ValidationError, ValueError) as e:
+    except ValidationError:
+        raise
+    except (OSError, ValueError) as e:
         die(e)
 
     table = Table(title=str(path))
@@ -219,13 +227,16 @@ def list_devices(ctx: click.Context) -> None:
 )
 @click.option("--app-username", default="", help="X1 app username")
 @click.option("--app-password", default="", help="X1 app password")
+@click.option("--aes-key", default="", help="TKS-IP logfile AES key")
 @click.pass_context
 def add_device(ctx: click.Context, **kwargs: object) -> None:
     """Add or replace a named device."""
     path = _config_path(ctx)
     try:
         cfg = _load_or_empty(path)
-    except (OSError, ValidationError, ValueError) as e:
+    except ValidationError:
+        raise
+    except (OSError, ValueError) as e:
         die(e)
 
     name = cast("str", kwargs["name"])

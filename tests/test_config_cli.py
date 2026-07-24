@@ -1,3 +1,4 @@
+import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from pygira.cli import main
-from pygira.context import resolve_login
+from pygira.context import TKS_AES_KEY_ENV, resolve_login, resolve_tks_aes_key
 from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
 from pygira.models import DeviceConfig, load_config
@@ -96,6 +97,31 @@ def test_config_add_device_inside_location(tmp_path: Path) -> None:
     assert "device(s)" in validate_result.output
 
 
+def test_config_add_tks_device_with_aes_key(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    result = CliRunner().invoke(
+        main,
+        [
+            "--config",
+            str(path),
+            "config",
+            "add-device",
+            "front_door",
+            "--type",
+            "tks-ip",
+            "--host",
+            "tks.local",
+            "--password",
+            "secret",
+            "--aes-key",
+            "0123456789abcdefghijklmn",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert load_config(path).devices["front_door"].aes_key == "0123456789abcdefghijklmn"
+
+
 def test_config_round_trips_quoted_device_and_location_names(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     result = CliRunner().invoke(
@@ -139,6 +165,25 @@ def test_config_validate_rejects_unknown_fields(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "pasword" in result.output
+    assert "secret" not in result.output
+
+
+def test_config_validation_never_echoes_nested_credentials(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        "\n".join(
+            [
+                'apartments = [{ name = "home", password = "do-not-print" }]',
+            ],
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["--config", str(path), "config", "validate"])
+
+    assert result.exit_code == 1
+    assert "apartments" in result.output
+    assert "Extra inputs are not permitted" in result.output
+    assert "do-not-print" not in result.output
 
 
 @pytest.mark.parametrize(
@@ -260,3 +305,64 @@ admin_password = "secret"
     assert host == "x1.local"
     assert username == "device"
     assert password == "secret"
+
+
+def test_resolve_tks_aes_key_precedence(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        """
+[devices.front_door]
+type = "tks-ip"
+host = "tks.local"
+password = "secret"
+aes_key = "configuration-key-value"
+""".strip(),
+    )
+    ctx = click.Context(
+        click.Command("test"),
+        obj={
+            "config_path": str(path),
+            "device_name": "front_door",
+            "location": None,
+            "requested_device": None,
+        },
+    )
+
+    with (
+        ctx,
+        patch.dict(os.environ, {TKS_AES_KEY_ENV: "environment-key-value"}),
+        patch("pygira.context.dotenv_values", return_value={TKS_AES_KEY_ENV: "dotenv-key-value"}),
+    ):
+        assert resolve_tks_aes_key("command-line-key-value") == "command-line-key-value"
+        assert resolve_tks_aes_key(None) == "environment-key-value"
+
+
+def test_resolve_tks_aes_key_uses_dotenv_then_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        """
+[devices.front_door]
+type = "tks-ip"
+host = "tks.local"
+password = "secret"
+aes_key = "configuration-key-value"
+""".strip(),
+    )
+    ctx = click.Context(
+        click.Command("test"),
+        obj={
+            "config_path": str(path),
+            "device_name": "front_door",
+            "location": None,
+            "requested_device": None,
+        },
+    )
+
+    with ctx, patch.dict(os.environ, {}, clear=True):
+        with patch(
+            "pygira.context.dotenv_values",
+            return_value={TKS_AES_KEY_ENV: "dotenv-key-value"},
+        ):
+            assert resolve_tks_aes_key(None) == "dotenv-key-value"
+        with patch("pygira.context.dotenv_values", return_value={}):
+            assert resolve_tks_aes_key(None) == "configuration-key-value"

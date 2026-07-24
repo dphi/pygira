@@ -1,11 +1,21 @@
 """pygira - Gira provisioning CLI."""
 
 import click
+from pydantic import ValidationError
 
 from pygira import __version__, command_support
 from pygira.commands import bootstrap, config, device, firmware, gds, maintenance
 from pygira.core.types import DeviceType
 from pygira.exceptions import PygiraError
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    """Render validation failures without echoing credential-bearing input values."""
+    details = []
+    for error in exc.errors(include_input=False, include_url=False):
+        location = ".".join(str(part) for part in error["loc"]) or "configuration"
+        details.append(f"{location}: {error['msg']}")
+    return "Validation failed:\n" + "\n".join(details)
 
 
 class PygiraGroup(click.Group):
@@ -15,6 +25,8 @@ class PygiraGroup(click.Group):
         """Invoke a command and render expected library failures for CLI users."""
         try:
             return super().invoke(ctx)
+        except ValidationError as exc:
+            raise click.ClickException(_format_validation_error(exc)) from exc
         except (PygiraError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
