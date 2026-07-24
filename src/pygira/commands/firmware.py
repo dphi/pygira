@@ -6,27 +6,28 @@ from typing import cast
 
 import click
 
-from pygira import api as api_mod
 from pygira.context import console, resolve_login
-from pygira.core.types import DeviceType
+from pygira.devices.base import ResolvedTarget
+from pygira.devices.registry import Device, create_device
 from pygira.options import common_options
 
 
-def _client(
+def _device(
     ip: str | None,
     password: str | None,
     username: str | None,
     timeout: float,
-) -> tuple[DeviceType, api_mod.ApiClient]:
+) -> Device:
     profile, ip, username, password = resolve_login(ip, username, password)
-    client = api_mod.ApiClient(
-        ip,
-        username,
-        password,
-        api_prefix=profile.api_prefix,
-        timeout=timeout,
+    return create_device(
+        ResolvedTarget(
+            profile=profile,
+            host=ip,
+            username=username,
+            password=password,
+            timeout=timeout,
+        ),
     )
-    return profile.device_type, client
 
 
 @click.command("check-update")
@@ -38,12 +39,7 @@ def check_update(
     timeout: float,
 ) -> None:
     """Check if an online firmware update is available."""
-    device_type, client = _client(ip, password, username, timeout)
-    result = (
-        client.get_firmware_status()
-        if device_type == DeviceType.X1
-        else client.check_online_update()
-    )
+    result = _device(ip, password, username, timeout).check_update()
     console.print_json(json.dumps(result))
 
 
@@ -75,22 +71,22 @@ def upgrade(**kwargs: object) -> None:
         else:
             online = True
 
-    _, client = _client(ip, password, username, timeout)
+    device = _device(ip, password, username, timeout)
     if firmware_file:
         console.print(f"Uploading firmware from {firmware_file!r}…")
-        client.upload_firmware(Path(firmware_file))
+        device.upload_firmware(Path(firmware_file))
         console.print("Upload complete. Triggering install…")
-        result = client.initiate_local_install()
+        result = device.initiate_local_install()
         console.print_json(json.dumps(result))
     else:
         console.print("Starting online firmware update…")
-        result = client.trigger_online_update()
+        result = device.trigger_online_update()
         console.print_json(json.dumps(result))
 
     if no_wait:
         return
     console.print("Waiting for update to complete (up to 5 min)…")
-    done = client.wait_for_completion()
+    done = device.wait_for_completion()
     if done:
         console.print("[green]Firmware update completed.[/green]")
     else:
@@ -108,8 +104,7 @@ def commissioning_test(
     timeout: float,
 ) -> None:
     """Run the built-in commissioning test."""
-    _, client = _client(ip, password, username, timeout)
-    result = client.commissioning_test()
+    result = _device(ip, password, username, timeout).commissioning_test()
     console.print_json(json.dumps(result))
 
 
@@ -129,8 +124,7 @@ def enable_ssh(
     persistent: bool,
 ) -> None:
     """Enable SSH access on the device."""
-    _, client = _client(ip, password, username, timeout)
-    client.enable_ssh(persistent=persistent)
+    _device(ip, password, username, timeout).enable_ssh(persistent=persistent)
     mode = "persistent" if persistent else "one-time"
     console.print(f"[green]SSH enabled ({mode}).[/green]")
 
@@ -144,8 +138,7 @@ def disable_ssh(
     timeout: float,
 ) -> None:
     """Stop sshd and remove the persistent SSH-enable marker."""
-    _, client = _client(ip, password, username, timeout)
-    client.disable_ssh()
+    _device(ip, password, username, timeout).disable_ssh()
     console.print("[green]SSH disabled.[/green]")
 
 

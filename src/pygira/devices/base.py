@@ -15,3 +15,14 @@ class DeviceProfile:
     api_prefix: str
     # G1 with UserManagement=false logs in as the fixed "device" account, not "admin".
     default_username: str = "admin"
+
+
+@dataclass(frozen=True)
+class ResolvedTarget:
+    """Effective connection settings for one resolved device."""
+
+    profile: DeviceProfile
+    host: str
+    username: str
+    password: str
+    timeout: float

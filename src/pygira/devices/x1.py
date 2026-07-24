@@ -75,6 +75,10 @@ class X1:
         """Return normalized, typed firmware status."""
         return self.api.get_firmware_status_model()
 
+    def check_update(self) -> dict:
+        """Return the X1 firmware update status."""
+        return self.api.get_firmware_status()
+
     def upgrade_progress(self) -> dict:
         """Return the current upgrade progress."""
         return self.api.get_upgrade_progress()
@@ -145,6 +149,10 @@ class X1:
     def wait_for_completion(self, poll_interval: float = 5.0, max_wait: float = 300.0) -> bool:
         """Wait for the device to finish an in-flight operation."""
         return self.api.wait_for_completion(poll_interval=poll_interval, max_wait=max_wait)
+
+    def commissioning_test(self) -> dict:
+        """Run the built-in commissioning test."""
+        return self.api.commissioning_test()
 
     # ------------------------------------------------------------------ #
     # Controls — X1-only iscwebservice commands                           #
