@@ -77,11 +77,90 @@ class LocationConfig(ConfigModel):
     devices: dict[str, DeviceConfig] = Field(default_factory=dict)
 
 
+class LegacyG1Config(ConfigModel):
+    """G1 credentials from the original apartment-oriented file format."""
+
+    ip: str
+    password: str
+    username: str = ""
+
+
+class LegacyX1Config(ConfigModel):
+    """X1 credentials from the original apartment-oriented file format."""
+
+    ip: str
+    admin_password: str
+    app_username: str = ""
+    app_password: str = ""
+
+
+class LegacyTksConfig(ConfigModel):
+    """TKS-IP credentials from the original apartment-oriented file format."""
+
+    ip: str
+    username: str
+    password: str
+
+
+class LegacyApartmentConfig(ConfigModel):
+    """One entry from the original ``[[apartments]]`` configuration."""
+
+    id: str | int
+    name: str = ""
+    g1: LegacyG1Config | None = None
+    x1: LegacyX1Config | None = None
+    tks_ip: LegacyTksConfig | None = None
+
+
 class PygiraConfig(ConfigModel):
     """Complete devices.toml configuration."""
 
     devices: dict[str, DeviceConfig] = Field(default_factory=dict)
     locations: dict[str, LocationConfig] = Field(default_factory=dict)
+    apartments: list[LegacyApartmentConfig] = Field(default_factory=list, exclude=True)
+
+    @model_validator(mode="after")
+    def _normalize_legacy_apartments(self) -> "PygiraConfig":
+        if not self.apartments:
+            return self
+        if self.devices or self.locations:
+            msg = "apartments cannot be combined with devices or locations"
+            raise ValueError(msg)
+
+        locations: dict[str, LocationConfig] = {}
+        for apartment in self.apartments:
+            key = str(apartment.id)
+            if key in locations:
+                msg = f"Apartment id {key!r} is duplicated"
+                raise ValueError(msg)
+
+            devices: dict[str, DeviceConfig] = {}
+            if apartment.g1 is not None:
+                devices["g1"] = DeviceConfig(
+                    type=DeviceType.G1,
+                    ip=apartment.g1.ip,
+                    username=apartment.g1.username,
+                    password=apartment.g1.password,
+                )
+            if apartment.x1 is not None:
+                devices["x1"] = DeviceConfig(
+                    type=DeviceType.X1,
+                    ip=apartment.x1.ip,
+                    admin_password=apartment.x1.admin_password,
+                    app_username=apartment.x1.app_username,
+                    app_password=apartment.x1.app_password,
+                )
+            if apartment.tks_ip is not None and apartment.tks_ip.password:
+                devices["tks_ip"] = DeviceConfig(
+                    type=DeviceType.TKS_IP,
+                    ip=apartment.tks_ip.ip,
+                    username=apartment.tks_ip.username,
+                    password=apartment.tks_ip.password,
+                )
+            locations[key] = LocationConfig(name=apartment.name, devices=devices)
+
+        self.locations = locations
+        return self
 
 
 def load_config(path: str | Path) -> PygiraConfig:

@@ -12,7 +12,7 @@ from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.devices.registry import get_profile
 from pygira.exceptions import UnsupportedCapabilityError
-from pygira.models import DeviceConfig, load_config
+from pygira.models import DeviceConfig, LocationConfig, PygiraConfig, load_config
 
 console = Console()
 err = Console(stderr=True)
@@ -35,6 +35,20 @@ def _device_type(value: str | DeviceType) -> DeviceType:
         raise click.UsageError(msg) from exc
 
 
+def _find_location(cfg: PygiraConfig, name: str) -> LocationConfig | None:
+    """Find a location by stable key or unique display name."""
+    locations = cfg.locations
+    if name in locations:
+        return locations[name]
+    matches = [location for location in locations.values() if location.name == name]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        msg = f"Location name {name!r} is ambiguous; use its apartment id"
+        raise click.UsageError(msg)
+    return None
+
+
 def _selected_device() -> tuple[str, DeviceConfig] | None:
     """Return the selected named device from devices.toml, if --name was used."""
     ctx = click.get_current_context()
@@ -48,7 +62,7 @@ def _selected_device() -> tuple[str, DeviceConfig] | None:
     location_name = obj.get("location")
 
     if location_name:
-        location = cfg.locations.get(location_name)
+        location = _find_location(cfg, location_name)
         if location is None:
             msg = f"Location {location_name!r} not found in {config_path}"
             raise click.UsageError(msg)
@@ -110,6 +124,16 @@ def _selected_tks_device() -> DeviceConfig | None:
     """Return a configured TKS-IP device related to the selected location/device."""
     ctx = click.get_current_context()
     obj = ctx.obj or {}
+    if obj.get("device_name"):
+        selected = _selected_device()
+        if selected is None:
+            return None
+        _, device = selected
+        if _device_type(device.type) != DeviceType.TKS_IP:
+            msg = "The selected device is not a TKS-IP gateway"
+            raise click.UsageError(msg)
+        return device
+
     config_path = obj.get("config_path", "devices.toml")
     try:
         cfg = load_config(Path(config_path))
@@ -118,17 +142,30 @@ def _selected_tks_device() -> DeviceConfig | None:
 
     location_name = obj.get("location")
     if location_name:
-        location = cfg.locations.get(location_name)
+        location = _find_location(cfg, location_name)
         if location is None:
             msg = f"Location {location_name!r} not found in {config_path}"
             raise click.UsageError(msg)
-        devices = location.devices.values()
+        devices = list(location.devices.values())
     else:
-        devices = cfg.devices.values()
+        devices = [
+            *cfg.devices.values(),
+            *(
+                device
+                for location in cfg.locations.values()
+                for device in location.devices.values()
+            ),
+        ]
 
     tks_devices = [device for device in devices if _device_type(device.type) == DeviceType.TKS_IP]
     if len(tks_devices) == 1:
         return tks_devices[0]
+    if len(tks_devices) > 1:
+        msg = (
+            "Multiple TKS-IP gateways are configured; pass --location "
+            "<apartment-id-or-name> before the command"
+        )
+        raise click.UsageError(msg)
     return None
 
 
