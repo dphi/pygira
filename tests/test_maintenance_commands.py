@@ -13,7 +13,6 @@ from click.testing import CliRunner
 from pygira.cli import main
 from pygira.config_service import TksStatus, TksWebInterfaceActivation
 from pygira.devices.g1 import PROFILE as G1_PROFILE
-from pygira.devices.x1 import PROFILE as X1_PROFILE
 from pygira.gds import GdsClient
 from pygira.models import WeatherStation
 
@@ -127,17 +126,16 @@ def test_set_weather_and_g1_factory_reset() -> None:
     assert reset.exit_code == 0, reset.output
 
 
-def test_pull_logs_uses_x1_download_path(tmp_path: Path) -> None:
+def test_pull_logs_uses_device_facade(tmp_path: Path) -> None:
     output = tmp_path / "logs.zip"
-    with (
-        patch("pygira.commands.maintenance.resolve_login", return_value=_login(X1_PROFILE)),
-        patch("pygira.commands.maintenance.cs.download_logs_x1", return_value=b"logs") as download,
-    ):
-        result = CliRunner().invoke(main, ["pull-logs", *CREDS, "--output", str(output)])
+    device = MagicMock()
+    device.logfile.return_value = b"logs"
+    with patch("pygira.commands.maintenance._device_client", return_value=device):
+        result = CliRunner().invoke(main, ["logs", "pull", *CREDS, "--output", str(output)])
 
     assert result.exit_code == 0, result.output
     assert output.read_bytes() == b"logs"
-    download.assert_called_once()
+    device.logfile.assert_called_once_with()
 
 
 def test_tail_logs_stops_cleanly_on_keyboard_interrupt() -> None:

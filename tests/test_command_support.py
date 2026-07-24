@@ -14,14 +14,15 @@ def test_root_help_prefixes_commands_with_supported_devices() -> None:
     result = CliRunner().invoke(main, ["--help"])
 
     assert result.exit_code == 0, result.output
-    assert "[G1/X1] Check if an online firmware update" in result.output
-    assert "[G1] Configure weather display" in result.output
-    assert "[X1] Show X1 logging verbosity" in result.output
-    assert "[TKS-IP] Check TKS-IP gateway status" in result.output
+    assert "[G1/X1] Check and install device firmware" in result.output
+    assert "[G1] Configure the G1 weather display" in result.output
+    assert "[G1/X1] Read or change device logging verbosity" in result.output
+    assert "[G1/TKS-IP] Manage G1 door communication" in result.output
+    assert "get-ntp" not in result.output
 
 
 def test_command_help_states_supported_devices() -> None:
-    result = CliRunner().invoke(main, ["set-weather", "--help"])
+    result = CliRunner().invoke(main, ["weather", "set", "--help"])
 
     assert result.exit_code == 0, result.output
     assert "Supported devices: G1." in result.output
@@ -33,4 +34,13 @@ def test_command_support_lists_nested_commands() -> None:
     assert result.exit_code == 0, result.output
     assert "gds listen" in result.output
     assert "TKS-IP" in result.output
-    assert "x1-export-program" in result.output
+    assert "program export" in result.output
+    assert "network get" in result.output
+    assert "tks info" in result.output
+
+
+def test_flat_command_aliases_are_hidden_and_deprecated() -> None:
+    command = main.commands["get-ntp"]
+
+    assert command.hidden is True
+    assert command.deprecated

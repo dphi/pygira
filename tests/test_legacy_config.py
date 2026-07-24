@@ -65,7 +65,7 @@ def test_multiple_tks_gateways_have_an_actionable_error(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(LEGACY_CONFIG + LEGACY_CONFIG.replace("id = 17", "id = 18"))
 
-    result = CliRunner().invoke(main, ["--config", str(path), "tks-info"])
+    result = CliRunner().invoke(main, ["--config", str(path), "tks", "info"])
 
     assert result.exit_code == USAGE_ERROR
     assert "Multiple TKS-IP gateways are configured" in result.output

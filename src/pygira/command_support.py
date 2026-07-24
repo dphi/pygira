@@ -1,6 +1,7 @@
 """CLI command-to-device applicability metadata."""
 
 from collections.abc import Iterator
+from copy import copy
 from dataclasses import dataclass
 
 import click
@@ -30,44 +31,123 @@ G1 = DeviceSupport(("G1",))
 X1 = DeviceSupport(("X1",))
 TKS_IP = DeviceSupport(("TKS-IP",))
 G1_X1 = DeviceSupport(("G1", "X1"))
+G1_TKS_IP = DeviceSupport(("G1", "TKS-IP"))
 ALL_DEVICES = DeviceSupport(("G1", "X1", "TKS-IP"))
 LOCAL = DeviceSupport(("Local",))
 
-ROOT_SUPPORT: dict[str, DeviceSupport] = {
-    "activate-tks-web": TKS_IP,
-    "bootstrap": G1_X1,
-    "check-update": G1_X1,
-    "commissioning-test": G1_X1,
-    "config": ALL_DEVICES,
-    "detect": G1_X1,
-    "diagnostics": G1_X1,
-    "disable-ssh": G1_X1,
-    "enable-ssh": G1_X1,
-    "factory-reset": G1_X1,
-    "gds": G1,
-    "get-logging": X1,
-    "get-ntp": G1_X1,
-    "info": G1_X1,
-    "pull-logs": G1_X1,
-    "restart": G1_X1,
-    "set-ip": G1_X1,
-    "set-logging": X1,
-    "set-ntp": G1_X1,
-    "set-tks": G1,
-    "set-weather": G1,
-    "tail-logs": G1_X1,
-    "tks-backup-restore": TKS_IP,
-    "tks-backup-save": TKS_IP,
-    "tks-firmware-update": TKS_IP,
-    "tks-info": TKS_IP,
-    "tks-pull-logs": TKS_IP,
-    "tks-status": TKS_IP,
-    "tks-tail-logs": TKS_IP,
-    "upgrade": G1_X1,
-    "x1-export-program": X1,
-    "x1-import-program": X1,
-    "command-support": LOCAL,
+COMMAND_MOVES: dict[str, tuple[str, ...]] = {
+    "detect": ("device", "detect"),
+    "info": ("device", "info"),
+    "diagnostics": ("device", "diagnostics"),
+    "commissioning-test": ("device", "commissioning-test"),
+    "restart": ("device", "restart"),
+    "factory-reset": ("device", "factory-reset"),
+    "get-ip": ("network", "get"),
+    "set-ip": ("network", "set"),
+    "get-ntp": ("ntp", "get"),
+    "set-ntp": ("ntp", "set"),
+    "check-update": ("firmware", "check"),
+    "upgrade": ("firmware", "upgrade"),
+    "enable-ssh": ("ssh", "enable"),
+    "disable-ssh": ("ssh", "disable"),
+    "get-logging": ("logging", "get"),
+    "set-logging": ("logging", "set"),
+    "pull-logs": ("logs", "pull"),
+    "tail-logs": ("logs", "tail"),
+    "set-weather": ("weather", "set"),
+    "set-tks": ("tks", "configure"),
+    "activate-tks-web": ("tks", "activate"),
+    "tks-status": ("tks", "status"),
+    "tks-info": ("tks", "info"),
+    "tks-backup-save": ("tks", "backup", "save"),
+    "tks-backup-restore": ("tks", "backup", "restore"),
+    "tks-firmware-update": ("tks", "firmware", "update"),
+    "x1-export-program": ("program", "export"),
+    "x1-import-program": ("program", "import"),
 }
+
+LEGACY_ONLY: dict[str, str] = {
+    "tks-pull-logs": "logs pull",
+    "tks-tail-logs": "logs tail",
+}
+
+GROUP_HELP = {
+    "device": "Inspect and maintain a device.",
+    "network": "Read or change network settings.",
+    "ntp": "Read or change time synchronization.",
+    "firmware": "Check and install device firmware.",
+    "ssh": "Control device SSH access.",
+    "logging": "Read or change device logging verbosity.",
+    "logs": "Download or follow diagnostic logs.",
+    "weather": "Configure the G1 weather display.",
+    "tks": "Manage G1 door communication and TKS-IP gateways.",
+    "backup": "Save or restore a TKS-IP configuration backup.",
+    "program": "Export or import an X1 program.",
+}
+
+PATH_SUPPORT: dict[tuple[str, ...], DeviceSupport] = {
+    ("bootstrap",): G1_X1,
+    ("command-support",): LOCAL,
+    ("config",): ALL_DEVICES,
+    ("device",): G1_X1,
+    ("firmware",): G1_X1,
+    ("gds",): G1,
+    ("logging",): G1_X1,
+    ("logs",): ALL_DEVICES,
+    ("network",): G1_X1,
+    ("ntp",): G1_X1,
+    ("program",): X1,
+    ("ssh",): G1_X1,
+    ("tks",): G1_TKS_IP,
+    ("tks", "configure"): G1,
+    ("tks", "activate"): TKS_IP,
+    ("tks", "status"): TKS_IP,
+    ("tks", "info"): TKS_IP,
+    ("tks", "backup"): TKS_IP,
+    ("tks", "firmware"): TKS_IP,
+    ("weather",): G1,
+}
+
+
+def _ensure_group(parent: click.Group, name: str) -> click.Group:
+    existing = parent.commands.get(name)
+    if isinstance(existing, click.Group):
+        return existing
+    group = click.Group(name=name, help=GROUP_HELP[name])
+    parent.add_command(group)
+    return group
+
+
+def _hide_legacy_alias(
+    main: click.Group,
+    command: click.Command,
+    old: str,
+    replacement: str,
+) -> None:
+    alias = copy(command)
+    alias.hidden = True
+    alias.deprecated = f"Use 'pygira {replacement}' instead."
+    main.add_command(alias, old)
+
+
+def organize_commands(main: click.Group) -> None:
+    """Expose noun-first groups while keeping hidden deprecated flat aliases."""
+    for old, path in COMMAND_MOVES.items():
+        command = main.commands.pop(old, None)
+        if command is None:
+            continue
+        _hide_legacy_alias(main, command, old, " ".join(path))
+        parent = main
+        for group_name in path[:-1]:
+            parent = _ensure_group(parent, group_name)
+        parent.add_command(command, path[-1])
+
+    for old, replacement in LEGACY_ONLY.items():
+        command = main.commands.get(old)
+        if command is None:
+            continue
+        command.hidden = True
+        command.deprecated = f"Use 'pygira {replacement}' instead."
 
 
 def _commands(
@@ -77,16 +157,18 @@ def _commands(
     inherited: DeviceSupport | None = None,
 ) -> Iterator[tuple[tuple[str, ...], click.Command, DeviceSupport | None]]:
     for name, command in sorted(group.commands.items()):
+        if command.hidden:
+            continue
         path = (*prefix, name)
-        support = ROOT_SUPPORT.get(name) if not prefix else inherited
+        support = PATH_SUPPORT.get(path, inherited)
         yield path, command, support
         if isinstance(command, click.Group):
             yield from _commands(command, prefix=path, inherited=support)
 
 
 def missing_support_paths(group: click.Group) -> list[str]:
-    """Return root commands that do not declare device applicability."""
-    return sorted(set(group.commands) - set(ROOT_SUPPORT))
+    """Return visible command paths that do not declare device applicability."""
+    return [" ".join(path) for path, _command, support in _commands(group) if support is None]
 
 
 def annotate_help(group: click.Group) -> None:

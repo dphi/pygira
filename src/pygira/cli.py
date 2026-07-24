@@ -23,7 +23,7 @@ class PygiraGroup(click.Group):
 @click.version_option(version=__version__, prog_name="pygira")
 @click.option(
     "--device",
-    type=click.Choice(["g1", "x1"]),
+    type=click.Choice(["g1", "x1", "tks-ip"]),
     default=None,
     help="Expected device type",
 )
@@ -59,6 +59,7 @@ maintenance.register(main)
 firmware.register(main)
 bootstrap.register(main)
 command_support.register(main)
+command_support.organize_commands(main)
 command_support.annotate_help(main)
 
 if __name__ == "__main__":

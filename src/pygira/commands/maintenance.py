@@ -18,9 +18,12 @@ from pygira import config_service as cs
 from pygira import weather as weather_mod
 from pygira.commands._target import resolve_device as _device_client
 from pygira.context import (
+    _device_type,
+    _selected_device,
     console,
     require_capability,
     resolve_login,
+    resolve_tks_aes_key,
     resolve_tks_ip,
     resolve_tks_login,
 )
@@ -349,29 +352,39 @@ def _register_basic_maintenance(main: click.Group) -> None:
 def _register_pull_logs(main: click.Group) -> None:
     @main.command("pull-logs")
     @common_options
-    @click.option("--output", default="pygira-logs.zip", show_default=True, help="Output file path")
-    def pull_logs(
-        ip: str | None,
-        password: str | None,
-        username: str | None,
-        timeout: float,
-        output: str,
-    ) -> None:
+    @click.option(
+        "--aes-key",
+        default=None,
+        metavar="KEY",
+        help="TKS-IP AES-192 log key",
+    )
+    @click.option("--output", default=None, help="Output file path")
+    def pull_logs(**kwargs: object) -> None:
         """Download diagnostic log bundle from the device."""
-        profile, ip, username, password = resolve_login(ip, username, password)
-        if profile.device_type == DeviceType.X1:
-            data = cs.download_logs_x1(ip, username, password, timeout=timeout)
+        ip = cast("str | None", kwargs.get("ip"))
+        password = cast("str | None", kwargs.get("password"))
+        username = cast("str | None", kwargs.get("username"))
+        timeout = cast("float", kwargs["timeout"])
+        aes_key = cast("str | None", kwargs.get("aes_key"))
+        output = cast("str | None", kwargs.get("output"))
+        if _log_target_type() == DeviceType.TKS_IP:
+            host = resolve_tks_ip(ip)
+            data = cs.download_tks_logfile(host, aes_key=resolve_tks_aes_key(aes_key))
+            output = output or "tks-logs.dat"
         else:
-            client = api_mod.ApiClient(
-                ip,
-                username,
-                password,
-                api_prefix=profile.api_prefix,
-                timeout=timeout,
-            )
-            data = client.get_logfile()
+            data = _device_client(ip, password, username, timeout).logfile()
+            output = output or "pygira-logs.zip"
         Path(output).write_bytes(data)
         console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
+
+
+def _log_target_type() -> DeviceType | None:
+    """Return an explicitly selected log-source type, if one is available."""
+    selected = _selected_device()
+    if selected is not None:
+        return _device_type(selected[1].type)
+    ctx = click.get_current_context()
+    return (ctx.find_root().obj or {}).get("requested_device")
 
 
 def _fetch_tail_logs(
@@ -401,6 +414,24 @@ def _text_files(data: bytes, filters: tuple[str, ...]) -> dict[str, list[str]]:
     return result
 
 
+def _tks_text_files(data: bytes, filters: tuple[str, ...]) -> dict[str, list[str]]:
+    """Split a TKS-IP `/getlogfile` download into named text files.
+
+    Unlike G1/X1 (a confirmed ZIP), the TKS-IP bootstrap daemon serves a
+    single gzip-encoded stream with no confirmed archive format inside
+    (confirmed via firmware string analysis, not a live capture — see
+    research/tks-ip-v1/api-surface.md). Try ZIP first in case a bundle does
+    turn out to hold multiple named files; otherwise treat the whole blob as
+    one file so `--file`/tail selection still works either way.
+    """
+    with suppress(zipfile.BadZipFile):
+        return _text_files(data, filters)
+    name = "logfile"
+    if filters and not any(pattern in name for pattern in filters):
+        return {}
+    return {name: data.decode("utf-8", errors="replace").splitlines()}
+
+
 def _print_new_lines(files: dict[str, list[str]], seen: dict[str, int], lines: int) -> None:
     for name, file_lines in files.items():
         start = seen.get(name, max(0, len(file_lines) - lines))
@@ -412,6 +443,12 @@ def _print_new_lines(files: dict[str, list[str]], seen: dict[str, int], lines: i
 def _register_tail_logs(main: click.Group) -> None:
     @main.command("tail-logs")
     @common_options
+    @click.option(
+        "--aes-key",
+        default=None,
+        metavar="KEY",
+        help="TKS-IP AES-192 log key",
+    )
     @click.option(
         "--interval",
         default=5.0,
@@ -440,8 +477,21 @@ def _register_tail_logs(main: click.Group) -> None:
         interval = cast("float", kwargs["interval"])
         files = cast("tuple[str, ...]", kwargs["files"])
         lines = cast("int", kwargs["lines"])
+        aes_key = cast("str | None", kwargs["aes_key"])
 
         with suppress(KeyboardInterrupt, click.exceptions.Abort):
+            if _log_target_type() == DeviceType.TKS_IP:
+                host = resolve_tks_ip(cast("str | None", kwargs.get("ip")))
+                resolved_key = resolve_tks_aes_key(aes_key)
+                data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                tks_seen: dict[str, int] = {}
+                _print_new_lines(_tks_text_files(data, files), tks_seen, lines)
+
+                while True:
+                    time.sleep(interval)
+                    data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                    _print_new_lines(_tks_text_files(data, files), tks_seen, 0)
+
             profile, ip, username, password = resolve_login(
                 cast("str | None", kwargs.get("ip")),
                 cast("str | None", kwargs.get("username")),
@@ -467,7 +517,7 @@ def _register_logging_commands(main: click.Group) -> None:
         type=click.Choice(["extended", "normal"], case_sensitive=False),
         default="extended",
         show_default=True,
-        help="Enable or disable erweiterte Protokollierung on X1",
+        help="Select normal or extended device logging",
     )
     def set_logging(
         ip: str | None,

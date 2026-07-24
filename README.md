@@ -88,76 +88,88 @@ and the stability level of individual operations.
 ## Device selection
 
 - By default, `pygira` auto-detects the device type.
-- You can enforce a type with `--device {g1,x1}`.
+- You can enforce a type with `--device {g1,x1,tks-ip}`.
 - If `--device` does not match the detected device type, the command fails immediately.
 
 ## What you can do
 
-Every command takes `--ip`, `--username`, and `--password` (or a named device
-from `devices.toml`, see below). Run `pygira <command> --help` for the full
-option list. `pygira --help` lists everything.
+Device commands take `--ip`, `--username`, and `--password` (or a named device
+from `devices.toml`, see below). Commands are grouped by the resource they
+operate on. Run `pygira <group> <command> --help` for the full option list, or
+`pygira command-support` for the device compatibility matrix.
 
 **Inspect a device**
 
 ```bash
-pygira info --ip 192.168.1.240              # firmware version, MAC, IP config
-pygira info --ip 192.168.1.240 --long       # extended info from webservice
-pygira detect --ip 192.168.1.240            # identify model and firmware
-pygira diagnostics --ip 192.168.1.240       # diagnostic page data
+pygira device info --ip 192.168.1.240              # firmware version, MAC, IP config
+pygira device info --ip 192.168.1.240 --long       # extended info from webservice
+pygira device detect --ip 192.168.1.240            # identify model and firmware
+pygira device diagnostics --ip 192.168.1.240       # diagnostic page data
 ```
 
 **Network and time**
 
 ```bash
-pygira set-ip --ip 192.168.1.240 --static-ip 192.168.1.50 --subnet 255.255.255.0 --gateway 192.168.1.1
-pygira set-ip --ip 192.168.1.240 --dhcp
-pygira set-ntp --ip 192.168.1.240 --server pool.ntp.org --interval 10
-pygira get-ntp --ip 192.168.1.240
+pygira network get --ip 192.168.1.240
+pygira network set --ip 192.168.1.240 --static-ip 192.168.1.50 --subnet 255.255.255.0 --gateway 192.168.1.1
+pygira network set --ip 192.168.1.240 --dhcp
+pygira ntp set --ip 192.168.1.240 --server pool.ntp.org --interval 10
+pygira ntp get --ip 192.168.1.240
 ```
 
 **Logs**
 
 ```bash
-pygira pull-logs --ip 192.168.1.240 --output logs.zip   # download log bundle
-pygira tail-logs --ip 192.168.1.240                     # live-tail new log lines
-pygira get-logging / set-logging                        # X1 log verbosity
+pygira logs pull --ip 192.168.1.240 --output logs.zip   # G1, X1, or TKS-IP
+pygira logs tail --ip 192.168.1.240                     # live-tail new log lines
+pygira logging get --ip 192.168.1.240                   # G1 or X1 verbosity
+pygira logging set --ip 192.168.1.240 --mode normal
 ```
 
 **Firmware and lifecycle**
 
 ```bash
-pygira check-update --ip 192.168.1.240                  # is an online update available?
-pygira upgrade --ip 192.168.1.240 --online              # update from Gira servers
-pygira upgrade --ip 192.168.1.240 --file firmware.zip   # update from a local ZIP
-pygira restart --ip 192.168.1.240
-pygira factory-reset --ip 192.168.1.240 --confirm       # erases all configuration
-pygira commissioning-test --ip 192.168.1.240
+pygira firmware check --ip 192.168.1.240                  # is an update available?
+pygira firmware upgrade --ip 192.168.1.240 --online       # update from Gira servers
+pygira firmware upgrade --ip 192.168.1.240 --file firmware.zip
+pygira device restart --ip 192.168.1.240
+pygira device factory-reset --ip 192.168.1.240 --confirm  # erases all configuration
+pygira device commissioning-test --ip 192.168.1.240
 ```
 
 **SSH access**
 
 ```bash
-pygira enable-ssh --ip 192.168.1.240        # persistent across reboots by default
-pygira disable-ssh --ip 192.168.1.240
+pygira ssh enable --ip 192.168.1.240        # persistent across reboots by default
+pygira ssh disable --ip 192.168.1.240
 ```
 
 **G1-only: weather and TKS-IP door gateway**
 
 ```bash
-pygira set-weather --ip 192.168.1.240 --zip 10115 --country DE
-pygira set-tks --ip 192.168.1.240 --tks-ip 192.168.1.10 --tks-user user --tks-pass secret
-pygira tks-status --ip 192.168.1.240
+pygira weather set --ip 192.168.1.240 --zip 10115 --country DE
+pygira tks configure --ip 192.168.1.240 --tks-ip 192.168.1.10 --tks-user user --tks-pass secret
 pygira gds --ip 192.168.1.240 <subcommand>  # low-level GDS WebSocket access
 ```
 
 **TKS-IP gateway** (the separate door-communication device)
 
 ```bash
-pygira activate-tks-web --ip 192.168.1.10       # start the port-8080 web app
-pygira tks-backup-save --ip 192.168.1.10
-pygira tks-backup-restore --ip 192.168.1.10
-pygira tks-firmware-update --ip 192.168.1.10
+pygira tks activate --tks-ip 192.168.1.10       # start the port-8080 web app
+pygira tks status --tks-ip 192.168.1.10
+pygira tks info --tks-ip 192.168.1.10
+pygira tks backup save --tks-ip 192.168.1.10
+pygira tks backup restore backup.img --tks-ip 192.168.1.10
+pygira tks firmware update firmware.bin --tks-ip 192.168.1.10
+pygira --device tks-ip logs pull --ip 192.168.1.10  # download decrypted syslog
+pygira --device tks-ip logs tail --ip 192.168.1.10  # live-tail decrypted syslog
 ```
+
+TKS-IP log commands require an AES-192 key; no key is built into `pygira`.
+Supply it with `--aes-key`, `PYGIRA_TKS_AES_KEY`, a local `.env` entry, or the
+selected TKS device's `aes_key` configuration field. Resolution order is CLI,
+process environment, `.env`, then device configuration. Keys may be 24-byte
+text or 48 hexadecimal characters.
 
 **One-shot bootstrap** — set IP, TKS-IP, and weather in a single run:
 
@@ -168,8 +180,8 @@ pygira bootstrap --ip 192.168.1.240 ...
 **X1 program transfer** (experimental):
 
 ```bash
-pygira x1-export-program --ip 192.168.1.241
-pygira x1-import-program --ip 192.168.1.241 --file program.gpa
+pygira program export --ip 192.168.1.241
+pygira program import program.json --ip 192.168.1.241
 ```
 
 ## Device configuration
@@ -192,11 +204,12 @@ commit them. See [SECURITY.md](SECURITY.md) for the local-network threat model.
 Use named devices directly:
 
 ```bash
-pygira --name living_room_g1 info
-pygira --location home --name controller info
+pygira --name living_room_g1 device info
+pygira --location home --name controller device info
 ```
 
 Locations are optional grouping only; devices can live directly under `[devices.<name>]`.
+TKS-IP device entries may include an `aes_key` used only to decrypt diagnostic logs.
 
 ## Development
 

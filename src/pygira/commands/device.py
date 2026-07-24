@@ -512,6 +512,29 @@ def _register_set_ip(main: click.Group) -> None:
         console.print("[green]IP configuration updated.[/green]")
 
 
+def _register_get_ip(main: click.Group) -> None:
+    @main.command("get-ip")
+    @common_options
+    def get_ip(
+        ip: str | None,
+        password: str | None,
+        username: str | None,
+        timeout: float,
+    ) -> None:
+        """Show current network settings."""
+        data = _device_client(ip, password, username, timeout).device_info(long=True)
+        info = data.get("data", data)
+        network = {
+            "dhcp": info.get("Dhcp"),
+            "ip_address": info.get("IpAddress"),
+            "subnet_mask": info.get("SubnetMask"),
+            "default_gateway": info.get("DefaultGateway"),
+            "primary_dns": info.get("NameServer"),
+            "secondary_dns": info.get("SecondaryDns", info.get("SecondaryDNS")),
+        }
+        console.print_json(json.dumps(network))
+
+
 def register(main: click.Group) -> None:
     """Register device-related commands."""
     _register_detect(main)
@@ -519,4 +542,5 @@ def register(main: click.Group) -> None:
     _register_diagnostics(main)
     _register_set_ntp(main)
     _register_get_ntp(main)
+    _register_get_ip(main)
     _register_set_ip(main)
