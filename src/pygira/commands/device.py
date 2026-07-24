@@ -13,6 +13,7 @@ from pygira.context import console, resolve_login
 from pygira.core.detect import detect_device_type
 from pygira.exceptions import DeviceDetectionError
 from pygira.models import NetworkConfig
+from pygira.operations import NetworkPatch, merge_network_config
 from pygira.options import common_options, network_options
 
 FILESYSTEM_COLUMN_COUNT = 6
@@ -489,15 +490,16 @@ def _register_get_ntp(main: click.Group) -> None:
 
 
 def _network_config_from_kwargs(kwargs: dict[str, object], current: dict) -> NetworkConfig:
-    dhcp = kwargs.get("dhcp")
-    use_dhcp = dhcp if dhcp is not None else current.get("Dhcp", False)
-    return NetworkConfig(
-        dhcp=bool(use_dhcp),
-        ip_address=cast("str", kwargs.get("static_ip") or current.get("IpAddress", "")),
-        subnet_mask=cast("str", kwargs.get("subnet") or current.get("SubnetMask", "")),
-        default_gateway=cast("str", kwargs.get("gateway") or current.get("DefaultGateway", "")),
-        primary_dns=cast("str", kwargs.get("dns1") or current.get("NameServer", "")),
-        secondary_dns=cast("str", kwargs.get("dns2") or current.get("SecondaryDns", "")),
+    return merge_network_config(
+        current,
+        NetworkPatch(
+            dhcp=cast("bool | None", kwargs.get("dhcp")),
+            ip_address=cast("str | None", kwargs.get("static_ip")),
+            subnet_mask=cast("str | None", kwargs.get("subnet")),
+            default_gateway=cast("str | None", kwargs.get("gateway")),
+            primary_dns=cast("str | None", kwargs.get("dns1")),
+            secondary_dns=cast("str | None", kwargs.get("dns2")),
+        ),
     )
 
 

@@ -1,7 +1,5 @@
 """Bootstrap command."""
 
-import json
-import uuid
 from dataclasses import dataclass
 from typing import cast
 
@@ -13,6 +11,7 @@ from pygira.context import console, err, resolve_login
 from pygira.devices.base import DeviceProfile
 from pygira.gds import GdsClient, run_gds
 from pygira.models import NetworkConfig, WeatherStation
+from pygira.operations import NetworkPatch, build_weather_settings, merge_network_config
 from pygira.options import common_options, network_options
 
 _STEP_HINTS = (
@@ -73,14 +72,16 @@ class BootstrapOptions:
 
 
 def _network_config(opts: BootstrapOptions, current: dict) -> NetworkConfig:
-    use_dhcp = opts.dhcp if opts.dhcp is not None else current.get("Dhcp", False)
-    return NetworkConfig(
-        dhcp=use_dhcp,
-        ip_address=opts.static_ip or current.get("IpAddress", ""),
-        subnet_mask=opts.subnet or current.get("SubnetMask", ""),
-        default_gateway=opts.gateway or current.get("DefaultGateway", ""),
-        primary_dns=opts.dns1 or current.get("NameServer", ""),
-        secondary_dns=opts.dns2 or current.get("SecondaryDns", ""),
+    return merge_network_config(
+        current,
+        NetworkPatch(
+            dhcp=opts.dhcp,
+            ip_address=opts.static_ip,
+            subnet_mask=opts.subnet,
+            default_gateway=opts.gateway,
+            primary_dns=opts.dns1,
+            secondary_dns=opts.dns2,
+        ),
     )
 
 
@@ -155,22 +156,6 @@ def _require_station(station: WeatherStation | None, zip_code: str) -> WeatherSt
     return station
 
 
-def _weather_settings_json(station: WeatherStation) -> str:
-    station.guid = str(uuid.uuid4())
-    return json.dumps(
-        {
-            "acceptedLicense": True,
-            "weatherStations": [
-                {
-                    "weatherStationId": station.station_id,
-                    "label": station.label,
-                    "guid": station.guid,
-                },
-            ],
-        },
-    )
-
-
 def _configure_weather(
     profile: DeviceProfile,
     opts: BootstrapOptions,
@@ -195,7 +180,7 @@ def _configure_weather(
             weather_mod.find_station(opts.weather_zip, opts.weather_country),
             opts.weather_zip,
         )
-        settings_json = _weather_settings_json(station)
+        settings_json = build_weather_settings(station)
 
         async def _weather(client: GdsClient) -> None:
             await client.set_app_value("Gira.G1", "weather.settings", settings_json)
