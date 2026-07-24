@@ -136,6 +136,36 @@ class ApiClient:
             },
         )
 
+    def get_syslog_severity(self) -> int:
+        """Read the shared G1/X1 syslog severity setting."""
+        data = self.get_device_info(force_long=True).get("data") or {}
+        value = data.get("SyslogSeverity")
+        if value is None:
+            raise ProtocolError(
+                _PROTOCOL,
+                "getDeviceInfo",
+                "missing-field",
+                "response did not include SyslogSeverity",
+            )
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ProtocolError(
+                _PROTOCOL,
+                "getDeviceInfo",
+                "invalid-field",
+                f"Invalid SyslogSeverity value: {value!r}",
+            ) from exc
+
+    def set_syslog_severity(self, severity: int) -> None:
+        """Set the shared G1/X1 syslog severity setting."""
+        self._post(
+            {
+                "command": "setSyslogSeverity",
+                "data": {"syslogSeverity": severity},
+            },
+        )
+
     def set_ip_config(self, cfg: NetworkConfig) -> dict:
         """Set network configuration via webservice API."""
         data: dict[str, Any] = {

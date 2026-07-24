@@ -16,6 +16,7 @@ import click
 from pygira import api as api_mod
 from pygira import config_service as cs
 from pygira import weather as weather_mod
+from pygira.commands._target import resolve_device as _device_client
 from pygira.context import (
     console,
     require_capability,
@@ -475,16 +476,10 @@ def _register_logging_commands(main: click.Group) -> None:
         timeout: float,
         mode: str,
     ) -> None:
-        """Set X1 logging verbosity."""
-        profile, ip, username, password = resolve_login(ip, username, password)
-        _require_x1(profile, "set-logging")
-
+        """Set device logging verbosity."""
         severity = 0 if mode.lower() == "extended" else NORMAL_SYSLOG_SEVERITY
-        cs.set_syslog_severity_x1(ip, username, password, severity, timeout=timeout)
-        if severity == 0:
-            console.print("[green]Extended logging enabled.[/green]")
-        else:
-            console.print("[green]Extended logging disabled (normal mode).[/green]")
+        _device_client(ip, password, username, timeout).set_logging_severity(severity)
+        console.print(f"[green]Logging mode set to {mode.lower()}.[/green]")
 
     @main.command("get-logging")
     @common_options
@@ -494,13 +489,10 @@ def _register_logging_commands(main: click.Group) -> None:
         username: str | None,
         timeout: float,
     ) -> None:
-        """Show X1 logging verbosity mode."""
-        profile, ip, username, password = resolve_login(ip, username, password)
-        _require_x1(profile, "get-logging")
-
-        severity = cs.get_syslog_severity_x1(ip, username, password, timeout=timeout)
+        """Show device logging verbosity."""
+        severity = _device_client(ip, password, username, timeout).get_logging_severity()
         mode = "extended" if severity < NORMAL_SYSLOG_SEVERITY else "normal"
-        console.print(f"Logging mode: [bold]{mode}[/bold] (SyslogSeverity={severity})")
+        console.print(mode)
 
 
 def _register_x1_program_commands(main: click.Group) -> None:

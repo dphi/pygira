@@ -122,6 +122,14 @@ class X1:
         """Update the IP configuration."""
         return self.api.set_ip_config(cfg)
 
+    def get_logging_severity(self) -> int:
+        """Return the current logging severity."""
+        return self.api.get_syslog_severity()
+
+    def set_logging_severity(self, severity: int) -> None:
+        """Set the current logging severity."""
+        self.api.set_syslog_severity(severity)
+
     def enable_ssh(self, *, persistent: bool = True) -> None:
         """Enable SSH access."""
         self.api.enable_ssh(persistent=persistent)

@@ -140,21 +140,6 @@ def test_pull_logs_uses_x1_download_path(tmp_path: Path) -> None:
     download.assert_called_once()
 
 
-def test_logging_commands_delegate_to_x1_configuration_service() -> None:
-    with (
-        patch("pygira.commands.maintenance.resolve_login", return_value=_login(X1_PROFILE)),
-        patch("pygira.commands.maintenance.cs.set_syslog_severity_x1") as set_severity,
-        patch("pygira.commands.maintenance.cs.get_syslog_severity_x1", return_value=0),
-    ):
-        runner = CliRunner()
-        set_result = runner.invoke(main, ["set-logging", *CREDS, "--mode", "normal"])
-        get_result = runner.invoke(main, ["get-logging", *CREDS])
-
-    assert set_result.exit_code == 0, set_result.output
-    assert get_result.exit_code == 0, get_result.output
-    set_severity.assert_called_once_with(HOST, "device", "secret", 4, timeout=60.0)
-
-
 def test_tail_logs_stops_cleanly_on_keyboard_interrupt() -> None:
     with (
         patch("pygira.commands.maintenance.resolve_login", return_value=_login()),

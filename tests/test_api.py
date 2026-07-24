@@ -44,6 +44,7 @@ EXPECTED_AUTH = "Basic " + base64.b64encode(b"admin:secret").decode()
 SESSION_AUTH_CALL_COUNT = 4
 EXPECTED_MODEL_CALL_COUNT = 3
 EXPECTED_PROGRESS = 25
+EXPECTED_SYSLOG_SEVERITY = 2
 
 
 # ── auth header ───────────────────────────────────────────────────────────────
@@ -172,6 +173,33 @@ def test_set_ntp_config_payload_shape() -> None:
             "NtpServerAddress": "0.europe.pool.ntp.org",
             "NtpInterval": "10",
         },
+    }
+
+
+@respx.mock
+def test_get_syslog_severity_reads_shared_device_info_field() -> None:
+    route = respx.post(f"http://{HOST}/api").mock(
+        return_value=Response(200, json={"data": {"SyslogSeverity": "2"}}),
+    )
+
+    severity = ApiClient(HOST, USER, PASS).get_syslog_severity()
+
+    assert severity == EXPECTED_SYSLOG_SEVERITY
+    assert json.loads(route.calls.last.request.read()) == {
+        "command": "getDeviceInfo",
+        "data": {"forceLong": True},
+    }
+
+
+@respx.mock
+def test_set_syslog_severity_uses_shared_webservice_command() -> None:
+    route = respx.post(f"http://{HOST}/api").mock(return_value=Response(200, json={}))
+
+    ApiClient(HOST, USER, PASS).set_syslog_severity(4)
+
+    assert json.loads(route.calls.last.request.read()) == {
+        "command": "setSyslogSeverity",
+        "data": {"syslogSeverity": 4},
     }
 
 
