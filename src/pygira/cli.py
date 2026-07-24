@@ -2,7 +2,7 @@
 
 import click
 
-from pygira import __version__
+from pygira import __version__, command_support
 from pygira.commands import bootstrap, config, device, firmware, gds, maintenance
 from pygira.core.types import DeviceType
 from pygira.exceptions import PygiraError
@@ -58,6 +58,8 @@ gds.register(main)
 maintenance.register(main)
 firmware.register(main)
 bootstrap.register(main)
+command_support.register(main)
+command_support.annotate_help(main)
 
 if __name__ == "__main__":
     main()
