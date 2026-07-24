@@ -266,11 +266,12 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
 
 ### Adding a command
 
-Commands are decorated with `@common_options`, call `resolve_login()` first, and select behavior
-through the resolved device profile. Let expected `PygiraError` failures reach the top-level
-CLI boundary, which renders them consistently as Click errors. Use `click.UsageError` for invalid
-command input; do not broadly catch programming errors. Commands are registered via
-`register(main)` in each file under `commands/` and wired in `cli.py`.
+Commands are decorated with `@common_options`, resolve a `G1` or `X1` through
+`commands._target.resolve_device()`, and invoke that facade rather than constructing transports.
+Let expected `PygiraError` failures reach the top-level CLI boundary, which renders them
+consistently as Click errors. Use `click.UsageError` for invalid command input; do not broadly
+catch programming errors. Commands are registered via `register(main)` in each file under
+`commands/` and wired in `cli.py`.
 
 `resolve_login()` pulls credentials from `devices.toml` when `--name` is given, or prompts interactively.
 
@@ -299,7 +300,7 @@ password_hash = base64(sha256_bytes(password + salt))[:43]
 session_token = sha256_upper(password_hash + "+" + sessionSalt)
 stored_credential = password_hash + salt   # 75 chars total
 ```
-This is exactly what `ApiClient._compute_auth_token` implements for version `"GDS_1"`. Auth failures (error 220) mean the password in `devices.toml` does not match the device — `getDeviceInfo` without `forceLong` is publicly accessible so the mismatch is only exposed when `forceLong` is required.
+This is exactly what `auth.compute_session_token()` implements for version `"GDS_1"`. Auth failures (error 220) mean the password in `devices.toml` does not match the device — `getDeviceInfo` without `forceLong` is publicly accessible so the mismatch is only exposed when `forceLong` is required.
 
 **Factory reset**: `{request: {command: "Restart", type: "FactoryReset"}}` — this is a GDS WebSocket command, not an iscwebservice command. There is no confirmed `/api` equivalent.
 

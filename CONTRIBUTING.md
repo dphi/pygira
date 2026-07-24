@@ -31,9 +31,10 @@ and destructive device operations.
 
 ## Adding a command
 
-All commands follow the same pattern: decorate with `@common_options`, call
-`resolve_login()` first, construct `ApiClient` with `profile.api_prefix`, and
-let expected `PygiraError` failures reach the top-level CLI boundary. Use
+All commands follow the same pattern: decorate with `@common_options`, resolve
+the target through `commands._target.resolve_device()`, and invoke the public
+`G1`/`X1` facade. Commands must not construct transport clients directly.
+Let expected `PygiraError` failures reach the top-level CLI boundary. Use
 `click.UsageError` or `click.BadParameter` for invalid command input; do not
 broadly catch programming errors. Commands are registered via `register(main)`
 in each file under `src/pygira/commands/` and wired in `cli.py`.
