@@ -15,6 +15,7 @@ from pygira.devices.base import DeviceProfile
 from pygira.devices.registry import get_profile
 from pygira.exceptions import UnsupportedCapabilityError
 from pygira.models import DeviceConfig, LocationConfig, PygiraConfig, load_config
+from pygira.prompting import search_select
 
 console = Console()
 err = Console(stderr=True)
@@ -143,31 +144,32 @@ def _prompt_configured_device(
     if configured_location:
         location_key, location = locations[0]
     else:
-        click.echo("Configured locations:")
-        for index, (key, candidate) in enumerate(locations, start=1):
-            label = f"{candidate.name} ({key})" if candidate.name else key
-            click.echo(f"  {index}. {label}")
-        location_index = click.prompt(
+        location_key, location = search_select(
             "Location",
-            type=click.IntRange(1, len(locations)),
-            default=1 if len(locations) == 1 else None,
+            [
+                (
+                    f"{candidate.name} ({key})" if candidate.name else key,
+                    (key, candidate),
+                )
+                for key, candidate in locations
+            ],
         )
-        location_key, location = locations[location_index - 1]
 
     devices = [
         (name, device)
         for name, device in sorted(location.devices.items())
         if requested is None or _device_type(device.type) == requested
     ]
-    click.echo("Configured devices:")
-    for index, (name, device) in enumerate(devices, start=1):
-        click.echo(f"  {index}. {name} ({device.type.value}, {device.address})")
-    device_index = click.prompt(
+    device_name, device = search_select(
         "Device",
-        type=click.IntRange(1, len(devices)),
-        default=1 if len(devices) == 1 else None,
+        [
+            (
+                f"{name} ({device.type.value}, {device.address})",
+                (name, device),
+            )
+            for name, device in devices
+        ],
     )
-    device_name, device = devices[device_index - 1]
     obj["location"] = location_key
     obj["device_name"] = device_name
     return device_name, device

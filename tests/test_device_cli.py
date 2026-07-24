@@ -76,12 +76,12 @@ password = "configured-secret"
         result = CliRunner().invoke(
             main,
             ["--config", str(config_path), "device", "detect"],
-            input="y\n\n\n",
+            input="y\nHome (home)\npanel (g1, g1.home)\n",
         )
 
     assert result.exit_code == 0, result.output
-    assert "1. Home (home)" in result.output
-    assert "1. panel (g1, g1.home)" in result.output
+    assert "Home (home)" in result.output
+    assert "panel (g1, g1.home)" in result.output
     detect_device.assert_called_once_with("g1.home", "configured-user", "configured-secret")
 
 

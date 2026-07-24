@@ -345,7 +345,7 @@ password = "office-secret"
     ):
         result = CliRunner().invoke(
             resolve,
-            input="y\n2\n1\n",
+            input="y\nOffice (office)\npanel (g1, g1.office)\n",
             obj={
                 "config_path": str(path),
                 "device_name": None,
@@ -355,10 +355,10 @@ password = "office-secret"
         )
 
     assert result.exit_code == 0, result.output
-    assert "1. Home (home)" in result.output
-    assert "2. Office (office)" in result.output
+    assert "Home (home)" in result.output
+    assert "Office (office)" in result.output
     assert "controller" not in result.output
-    assert "1. panel (g1, g1.office)" in result.output
+    assert "panel (g1, g1.office)" in result.output
     assert "g1|g1.office|device|office-secret" in result.output
 
 
