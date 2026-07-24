@@ -27,14 +27,14 @@ def _run_gds(
 
 
 def test_bootstrap_runs_all_requested_steps() -> None:
-    api = MagicMock()
-    api.get_device_info.return_value = {"data": {"Dhcp": True}}
+    device = MagicMock()
+    device.device_info.return_value = {"data": {"Dhcp": True}}
     station = WeatherStation(station_id="test-station", label="Test Station")
     login = (PROFILE, "192.0.2.10", "device", "secret")
 
     with (
         patch("pygira.commands.bootstrap.resolve_login", return_value=login),
-        patch("pygira.commands.bootstrap.api_mod.ApiClient", return_value=api),
+        patch("pygira.commands.bootstrap.create_device", return_value=device),
         patch("pygira.commands.bootstrap.weather_mod.find_station", return_value=station),
         patch("pygira.commands.bootstrap.run_gds", side_effect=_run_gds),
     ):
@@ -56,7 +56,7 @@ def test_bootstrap_runs_all_requested_steps() -> None:
 
     assert result.exit_code == 0, result.output
     assert "3" in result.output
-    api.set_ip_config.assert_called_once()
+    device.set_ip.assert_called_once()
 
 
 def test_bootstrap_without_step_options_reports_all_skipped() -> None:
@@ -70,13 +70,13 @@ def test_bootstrap_without_step_options_reports_all_skipped() -> None:
 
 
 def test_bootstrap_continues_after_step_failures() -> None:
-    api = MagicMock()
-    api.get_device_info.side_effect = TransportError("network failed")
+    device = MagicMock()
+    device.device_info.side_effect = TransportError("network failed")
     login = (PROFILE, "192.0.2.10", "device", "secret")
 
     with (
         patch("pygira.commands.bootstrap.resolve_login", return_value=login),
-        patch("pygira.commands.bootstrap.api_mod.ApiClient", return_value=api),
+        patch("pygira.commands.bootstrap.create_device", return_value=device),
         patch("pygira.commands.bootstrap.weather_mod.find_station", return_value=None),
         patch("pygira.commands.bootstrap.run_gds", side_effect=TransportError("GDS failed")),
     ):
@@ -102,13 +102,13 @@ def test_bootstrap_continues_after_step_failures() -> None:
 
 
 def test_bootstrap_does_not_hide_programming_errors() -> None:
-    api = MagicMock()
-    api.get_device_info.side_effect = RuntimeError("programming bug")
+    device = MagicMock()
+    device.device_info.side_effect = RuntimeError("programming bug")
     login = (PROFILE, "192.0.2.10", "device", "secret")
 
     with (
         patch("pygira.commands.bootstrap.resolve_login", return_value=login),
-        patch("pygira.commands.bootstrap.api_mod.ApiClient", return_value=api),
+        patch("pygira.commands.bootstrap.create_device", return_value=device),
     ):
         result = CliRunner().invoke(main, ["bootstrap", "--dhcp"])
 

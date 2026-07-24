@@ -6,10 +6,10 @@ from typing import cast
 
 import click
 
-from pygira import api as api_mod
 from pygira import weather as weather_mod
 from pygira.context import console, err, resolve_login
-from pygira.devices.base import DeviceProfile
+from pygira.devices.base import DeviceProfile, ResolvedTarget
+from pygira.devices.registry import create_device
 from pygira.exceptions import InvalidInputError, PygiraError
 from pygira.gds import GdsClient, run_gds
 from pygira.models import NetworkConfig, WeatherStation
@@ -123,16 +123,17 @@ def _configure_network(
 
     console.print("[bold]Step 1:[/bold] Configuring network…")
     try:
-        api_prefix = profile.api_prefix
-        client = api_mod.ApiClient(
-            ip,
-            username,
-            password,
-            api_prefix=api_prefix,
-            timeout=opts.timeout,
+        device = create_device(
+            ResolvedTarget(
+                profile=profile,
+                host=ip,
+                username=username,
+                password=password,
+                timeout=opts.timeout,
+            ),
         )
-        current = client.get_device_info(force_long=True).get("data", {})
-        client.set_ip_config(_network_config(opts, current))
+        current = device.device_info(long=True).get("data", {})
+        device.set_ip(_network_config(opts, current))
     except PygiraError as e:
         err.print(f"  [red]✗ IP config failed:[/red] {e}")
         return BootstrapStep("network", StepStatus.FAILED, str(e))
