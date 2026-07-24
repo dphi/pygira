@@ -35,6 +35,7 @@ from pygira.devices.base import DeviceProfile
 from pygira.exceptions import UnsupportedCapabilityError
 from pygira.gds import GdsClient, run_gds
 from pygira.options import common_options
+from pygira.prompting import TypedAddress
 from pygira.tks_web import TksWebClient
 
 P = ParamSpec("P")
@@ -401,7 +402,11 @@ def _log_target(
     """Resolve the log-source type before asking for device-specific credentials."""
     selected = _selected_device()
     if selected is None and not ip:
-        selected = _prompt_configured_device()
+        prompted = _prompt_configured_device()
+        if isinstance(prompted, TypedAddress):
+            ip = prompted.value
+        else:
+            selected = prompted
     if selected is not None:
         device = selected[1]
         return _LogTarget(_device_type(device.type), ip or device.address)

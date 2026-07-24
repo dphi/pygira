@@ -345,7 +345,7 @@ password = "office-secret"
     ):
         result = CliRunner().invoke(
             resolve,
-            input="y\nOffice (office)\npanel (g1, g1.office)\n",
+            input="Office (office)\npanel (g1, g1.office)\n",
             obj={
                 "config_path": str(path),
                 "device_name": None,
@@ -355,14 +355,13 @@ password = "office-secret"
         )
 
     assert result.exit_code == 0, result.output
-    assert "Home (home)" in result.output
     assert "Office (office)" in result.output
     assert "controller" not in result.output
     assert "panel (g1, g1.office)" in result.output
     assert "g1|g1.office|device|office-secret" in result.output
 
 
-def test_resolve_login_can_decline_configured_device_selection(tmp_path: Path) -> None:
+def test_resolve_login_accepts_ip_on_location_selection_screen(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(
         """
@@ -387,7 +386,7 @@ password = "home-secret"
     ):
         result = CliRunner().invoke(
             resolve,
-            input="n\n192.0.2.40\nmanual-secret\n",
+            input="192.0.2.40\nmanual-secret\n",
             obj={
                 "config_path": str(path),
                 "device_name": None,
@@ -397,7 +396,8 @@ password = "home-secret"
         )
 
     assert result.exit_code == 0, result.output
-    assert "Device IP address" in result.output
+    assert "Location or IP address" in result.output
+    assert "Device IP address" not in result.output
     assert "192.0.2.40|manual-secret" in result.output
 
 

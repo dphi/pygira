@@ -15,7 +15,7 @@ from pygira.devices.base import DeviceProfile
 from pygira.devices.registry import get_profile
 from pygira.exceptions import UnsupportedCapabilityError
 from pygira.models import DeviceConfig, LocationConfig, PygiraConfig, load_config
-from pygira.prompting import search_select
+from pygira.prompting import TypedAddress, search_select, search_select_or_ip
 
 console = Console()
 err = Console(stderr=True)
@@ -100,7 +100,7 @@ def _selected_device() -> tuple[str, DeviceConfig] | None:
 
 def _prompt_configured_device(
     device_type: DeviceType | None = None,
-) -> tuple[str, DeviceConfig] | None:
+) -> tuple[str, DeviceConfig] | TypedAddress | None:
     """Offer a keyboard-driven location/device selection before manual IP entry."""
     ctx = click.get_current_context()
     ctx.ensure_object(dict)
@@ -135,17 +135,14 @@ def _prompt_configured_device(
             expected = requested.value if isinstance(requested, DeviceType) else "supported"
             msg = f"Location {configured_location!r} has no configured {expected} device"
             raise click.UsageError(msg)
-    elif not locations or not click.confirm(
-        "Select a device from the configured locations instead of entering an IP?",
-        default=True,
-    ):
+    elif not locations:
         return None
 
     if configured_location:
         location_key, location = locations[0]
     else:
-        location_key, location = search_select(
-            "Location",
+        location_selection = search_select_or_ip(
+            "Location or IP address",
             [
                 (
                     f"{candidate.name} ({key})" if candidate.name else key,
@@ -154,6 +151,9 @@ def _prompt_configured_device(
                 for key, candidate in locations
             ],
         )
+        if isinstance(location_selection, TypedAddress):
+            return location_selection
+        location_key, location = location_selection
 
     devices = [
         (name, device)
@@ -250,7 +250,7 @@ def _selected_tks_device() -> DeviceConfig | None:
     return None
 
 
-def _selected_or_prompted_tks_device() -> DeviceConfig | None:
+def _selected_or_prompted_tks_device() -> DeviceConfig | TypedAddress | None:
     """Resolve one TKS-IP config, prompting when location/device choice is ambiguous."""
     try:
         return _selected_tks_device()
@@ -259,16 +259,20 @@ def _selected_or_prompted_tks_device() -> DeviceConfig | None:
         if (ctx.obj or {}).get("device_name"):
             raise
         selected = _prompt_configured_device(DeviceType.TKS_IP)
-        return selected[1] if selected is not None else None
+        if isinstance(selected, tuple):
+            return selected[1]
+        return selected
 
 
 def resolve_tks_ip(tks_ip: str | None) -> str:
     """Resolve a TKS-IP host from --tks-ip, config, or prompt."""
     if tks_ip:
         return tks_ip
-    device = _selected_or_prompted_tks_device()
-    if device is not None:
-        return device.address
+    selected = _selected_or_prompted_tks_device()
+    if isinstance(selected, TypedAddress):
+        return selected.value
+    if selected is not None:
+        return selected.address
     return click.prompt("TKS-IP gateway IP address")
 
 
@@ -328,9 +332,15 @@ def resolve_tks_login(
     tks_pass: str | None,
 ) -> tuple[str, str, str]:
     """Resolve TKS-IP gateway host + web-login credentials."""
-    device = _selected_or_prompted_tks_device() if not (tks_ip and tks_user and tks_pass) else None
-    if device is not None:
-        host, username, password, _ = _device_login(device)
+    selected = (
+        _selected_or_prompted_tks_device()
+        if not (tks_ip and tks_user and tks_pass)
+        else None
+    )
+    if isinstance(selected, TypedAddress):
+        tks_ip = tks_ip or selected.value
+    elif selected is not None:
+        host, username, password, _ = _device_login(selected)
         tks_ip = tks_ip or host
         tks_user = tks_user or username
         tks_pass = tks_pass or password
@@ -352,7 +362,11 @@ def resolve_login(
     obj = ctx.obj
     selected = _selected_device()
     if selected is None and not ip:
-        selected = _prompt_configured_device()
+        prompted = _prompt_configured_device()
+        if isinstance(prompted, TypedAddress):
+            ip = prompted.value
+        else:
+            selected = prompted
     if selected is not None:
         _, device = selected
         cfg_ip, cfg_username, cfg_password, cfg_type = _device_login(device)

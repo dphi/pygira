@@ -76,7 +76,7 @@ password = "configured-secret"
         result = CliRunner().invoke(
             main,
             ["--config", str(config_path), "device", "detect"],
-            input="y\nHome (home)\npanel (g1, g1.home)\n",
+            input="Home (home)\npanel (g1, g1.home)\n",
         )
 
     assert result.exit_code == 0, result.output

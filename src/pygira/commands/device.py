@@ -15,6 +15,7 @@ from pygira.exceptions import DeviceDetectionError
 from pygira.models import NetworkConfig
 from pygira.operations import NetworkPatch, merge_network_config
 from pygira.options import common_options, network_options
+from pygira.prompting import TypedAddress
 
 FILESYSTEM_COLUMN_COUNT = 6
 PROCESS_COLUMN_COUNT = 8
@@ -330,7 +331,9 @@ def _register_detect(main: click.Group) -> None:
     def detect(ip: str | None, username: str | None, password: str | None) -> None:
         """Detect device model and firmware (tries unauthenticated probe first)."""
         selected = _prompt_configured_device() if not ip else None
-        if selected is not None:
+        if isinstance(selected, TypedAddress):
+            ip = selected.value
+        elif selected is not None:
             configured_ip, configured_user, configured_password, _ = _device_login(
                 selected[1],
             )
