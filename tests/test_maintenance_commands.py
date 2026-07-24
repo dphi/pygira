@@ -131,7 +131,10 @@ def test_pull_logs_uses_device_facade(tmp_path: Path) -> None:
     device = MagicMock()
     device.logfile.return_value = b"logs"
     with patch("pygira.commands.maintenance._device_client", return_value=device):
-        result = CliRunner().invoke(main, ["logs", "pull", *CREDS, "--output", str(output)])
+        result = CliRunner().invoke(
+            main,
+            ["--device", "x1", "logs", "pull", *CREDS, "--output", str(output)],
+        )
 
     assert result.exit_code == 0, result.output
     assert output.read_bytes() == b"logs"
@@ -147,7 +150,7 @@ def test_tail_logs_stops_cleanly_on_keyboard_interrupt() -> None:
         ),
         patch("pygira.commands.maintenance.time.sleep"),
     ):
-        result = CliRunner().invoke(main, ["tail-logs", *CREDS, "-n", "1"])
+        result = CliRunner().invoke(main, ["--device", "g1", "logs", "tail", *CREDS, "-n", "1"])
 
     assert result.exit_code == 0, result.output
     assert "second" in result.output

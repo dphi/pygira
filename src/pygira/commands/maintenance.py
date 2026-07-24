@@ -368,8 +368,11 @@ def _register_pull_logs(main: click.Group) -> None:
         aes_key = cast("str | None", kwargs.get("aes_key"))
         output = cast("str | None", kwargs.get("output"))
         if _log_target_type() == DeviceType.TKS_IP:
-            host = resolve_tks_ip(ip)
-            data = cs.download_tks_logfile(host, aes_key=resolve_tks_aes_key(aes_key))
+            host = resolve_tks_ip(ip, prompt_on_ambiguous=True)
+            data = cs.download_tks_logfile(
+                host,
+                aes_key=resolve_tks_aes_key(aes_key, host=host),
+            )
             output = output or "tks-logs.dat"
         else:
             data = _device_client(ip, password, username, timeout).logfile()
@@ -378,13 +381,20 @@ def _register_pull_logs(main: click.Group) -> None:
         console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
 
 
-def _log_target_type() -> DeviceType | None:
-    """Return an explicitly selected log-source type, if one is available."""
+def _log_target_type() -> DeviceType:
+    """Resolve the log-source type before asking for device-specific credentials."""
     selected = _selected_device()
     if selected is not None:
         return _device_type(selected[1].type)
     ctx = click.get_current_context()
-    return (ctx.find_root().obj or {}).get("requested_device")
+    requested = (ctx.find_root().obj or {}).get("requested_device")
+    if requested is not None:
+        return cast("DeviceType", requested)
+    selected_type = click.prompt(
+        "Log source device type",
+        type=click.Choice(["g1", "x1", "tks-ip"], case_sensitive=False),
+    )
+    return DeviceType(selected_type)
 
 
 def _fetch_tail_logs(
@@ -481,8 +491,11 @@ def _register_tail_logs(main: click.Group) -> None:
 
         with suppress(KeyboardInterrupt, click.exceptions.Abort):
             if _log_target_type() == DeviceType.TKS_IP:
-                host = resolve_tks_ip(cast("str | None", kwargs.get("ip")))
-                resolved_key = resolve_tks_aes_key(aes_key)
+                host = resolve_tks_ip(
+                    cast("str | None", kwargs.get("ip")),
+                    prompt_on_ambiguous=True,
+                )
+                resolved_key = resolve_tks_aes_key(aes_key, host=host)
                 data = cs.download_tks_logfile(host, aes_key=resolved_key)
                 tks_seen: dict[str, int] = {}
                 _print_new_lines(_tks_text_files(data, files), tks_seen, lines)

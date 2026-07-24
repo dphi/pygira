@@ -172,18 +172,45 @@ def _selected_tks_device() -> DeviceConfig | None:
     return None
 
 
-def resolve_tks_ip(tks_ip: str | None) -> str:
+def resolve_tks_ip(tks_ip: str | None, *, prompt_on_ambiguous: bool = False) -> str:
     """Resolve a TKS-IP host from --tks-ip, config, or prompt."""
     if tks_ip:
         return tks_ip
-    device = _selected_tks_device()
+    try:
+        device = _selected_tks_device()
+    except click.UsageError:
+        if not prompt_on_ambiguous:
+            raise
+        device = None
     if device is not None:
         return device.address
     return click.prompt("TKS-IP gateway IP address")
 
 
-def resolve_tks_aes_key(aes_key: str | None) -> str:
-    """Resolve the TKS logfile AES key without embedding a firmware default."""
+def _configured_tks_aes_key(host: str) -> str | None:
+    """Return the configured AES key for one unambiguously matching host."""
+    ctx = click.get_current_context()
+    config_path = (ctx.obj or {}).get("config_path", "devices.toml")
+    try:
+        cfg = load_config(Path(config_path))
+    except FileNotFoundError:
+        return None
+    devices = [
+        *cfg.devices.values(),
+        *(device for location in cfg.locations.values() for device in location.devices.values()),
+    ]
+    matches = [
+        device.aes_key
+        for device in devices
+        if _device_type(device.type) == DeviceType.TKS_IP
+        and device.address == host
+        and device.aes_key
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str:
+    """Resolve the TKS logfile AES key from options, configuration, or a prompt."""
     if aes_key:
         return aes_key
 
@@ -195,15 +222,19 @@ def resolve_tks_aes_key(aes_key: str | None) -> str:
     if dotenv_key:
         return dotenv_key
 
-    device = _selected_tks_device()
-    if device is not None and device.aes_key:
-        return device.aes_key
+    if host:
+        configured_key = _configured_tks_aes_key(host)
+        if configured_key:
+            return configured_key
+    else:
+        device = _selected_tks_device()
+        if device is not None and device.aes_key:
+            return device.aes_key
 
-    msg = (
-        "TKS-IP AES key is required; pass --aes-key, set "
-        f"{TKS_AES_KEY_ENV}, or configure aes_key for the TKS-IP device"
+    return click.prompt(
+        "TKS-IP logfile AES key",
+        hide_input=True,
     )
-    raise click.UsageError(msg)
 
 
 def resolve_tks_login(
