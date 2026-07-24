@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from lxml import etree
 
-from pygira.core.detect import DetectionResult, detect_device_type
+from pygira.core.detect import DetectionResult, ProbeAttempt, detect_device_type
 from pygira.core.resolve import resolve_device_type
 from pygira.core.types import DeviceType
 from pygira.exceptions import DeviceDetectionError
@@ -91,3 +91,43 @@ def test_detect_device_falls_back_to_api_probe_for_g1() -> None:
 
     assert result.device_type == DeviceType.G1
     assert result.firmware_version == "3.5.62.0"
+    assert result.attempts == (
+        ProbeAttempt("/webservice", "failed", "HTTPError: HTTP 404"),
+        ProbeAttempt("/api", "matched", "/api AppName=Gira G1"),
+    )
+
+
+def test_detect_device_reports_each_expected_probe_failure() -> None:
+    with (
+        patch(
+            "pygira.core.detect.cs.get_device_xml",
+            side_effect=etree.XMLSyntaxError("invalid XML", 0, 0, 0),
+        ),
+        patch("pygira.core.detect.httpx.Client") as client_type,
+    ):
+        client = client_type.return_value.__enter__.return_value
+        client.post.return_value = Response(
+            200,
+            json=[],
+            request=Request("POST", "http://host/probe"),
+        )
+
+        result = detect_device_type("host", "admin", "")
+
+    assert result.device_type == DeviceType.UNKNOWN
+    assert [attempt.endpoint for attempt in result.attempts] == [
+        "/webservice",
+        "/api",
+        "configurationservice",
+    ]
+    assert "response was not a JSON object" in result.evidence
+    assert "invalid XML" in result.evidence
+
+
+def test_detect_device_does_not_hide_unexpected_probe_failures() -> None:
+    with patch("pygira.core.detect.httpx.Client") as client_type:
+        client = client_type.return_value.__enter__.return_value
+        client.post.side_effect = RuntimeError("programming bug")
+
+        with pytest.raises(RuntimeError, match="programming bug"):
+            detect_device_type("host", "admin", "")
