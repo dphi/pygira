@@ -1,9 +1,11 @@
 """CLI runtime context and helpers."""
 
+import os
 from pathlib import Path
 from typing import NoReturn
 
 import click
+from dotenv import dotenv_values
 from rich.console import Console
 
 from pygira.core.detect import detect_device_type
@@ -16,6 +18,7 @@ from pygira.models import DeviceConfig, LocationConfig, PygiraConfig, load_confi
 
 console = Console()
 err = Console(stderr=True)
+TKS_AES_KEY_ENV = "PYGIRA_TKS_AES_KEY"
 
 
 def resolve_profile(ip: str, username: str, password: str) -> DeviceProfile:
@@ -177,6 +180,30 @@ def resolve_tks_ip(tks_ip: str | None) -> str:
     if device is not None:
         return device.address
     return click.prompt("TKS-IP gateway IP address")
+
+
+def resolve_tks_aes_key(aes_key: str | None) -> str:
+    """Resolve the TKS logfile AES key without embedding a firmware default."""
+    if aes_key:
+        return aes_key
+
+    environment_key = os.environ.get(TKS_AES_KEY_ENV)
+    if environment_key:
+        return environment_key
+
+    dotenv_key = dotenv_values(".env").get(TKS_AES_KEY_ENV)
+    if dotenv_key:
+        return dotenv_key
+
+    device = _selected_tks_device()
+    if device is not None and device.aes_key:
+        return device.aes_key
+
+    msg = (
+        "TKS-IP AES key is required; pass --aes-key, set "
+        f"{TKS_AES_KEY_ENV}, or configure aes_key for the TKS-IP device"
+    )
+    raise click.UsageError(msg)
 
 
 def resolve_tks_login(

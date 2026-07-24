@@ -4,6 +4,7 @@ API: HTTPS port 4433, auth: "basic <b64>", XML namespace http://service.schema.g
 """
 
 import base64
+import gzip
 from typing import NoReturn
 from unittest.mock import patch
 
@@ -179,6 +180,62 @@ def test_download_logs_x1_uses_session_auth_flow() -> None:
 
     data = cs.download_logs_x1(HOST, USER, PASS)
     assert data == b"PK\x03\x04x1-log-data"
+
+
+@respx.mock
+def test_download_tks_logfile_decompresses_gzip_body_with_no_content_encoding_header() -> None:
+    """Confirmed live (2026-07-20): the daemon sends a gzip *body* without ever
+    announcing `Content-Encoding: gzip` — detection has to be by magic bytes."""
+    raw = b"opaque device log bundle bytes"
+    respx.get(f"http://{HOST}/getlogfile").mock(
+        return_value=Response(200, content=gzip.compress(raw)),
+    )
+
+    data = cs.download_tks_logfile(HOST)
+
+    assert data == raw
+
+
+@respx.mock
+def test_download_tks_logfile_passes_through_non_gzip_body() -> None:
+    respx.get(f"http://{HOST}/getlogfile").mock(return_value=Response(200, content=b"plain log"))
+
+    data = cs.download_tks_logfile(HOST)
+
+    assert data == b"plain log"
+
+
+def test_decrypt_tks_logfile_matches_nist_aes_192_vector() -> None:
+    key = "000102030405060708090a0b0c0d0e0f1011121314151617"
+    ciphertext = bytes.fromhex("dda97ca4864cdfe06eaf70a0ec0d7191")
+
+    assert cs.decrypt_tks_logfile(ciphertext, key) == bytes.fromhex(
+        "00112233445566778899aabbccddeeff",
+    )
+
+
+@pytest.mark.parametrize("key", ["short", "0" * 46])
+def test_decrypt_tks_logfile_rejects_invalid_key_length(key: str) -> None:
+    with pytest.raises(ValueError, match="24 bytes"):
+        cs.decrypt_tks_logfile(b"\0" * 16, key)
+
+
+def test_decrypt_tks_logfile_rejects_partial_block() -> None:
+    with pytest.raises(ValueError, match="multiple of 16"):
+        cs.decrypt_tks_logfile(b"partial-block", b"k" * 24)
+
+
+@respx.mock
+def test_download_tks_logfile_decrypts_after_gzip() -> None:
+    key = "000102030405060708090a0b0c0d0e0f1011121314151617"
+    ciphertext = bytes.fromhex("dda97ca4864cdfe06eaf70a0ec0d7191")
+    respx.get(f"http://{HOST}/getlogfile").mock(
+        return_value=Response(200, content=gzip.compress(ciphertext)),
+    )
+
+    assert cs.download_tks_logfile(HOST, aes_key=key) == bytes.fromhex(
+        "00112233445566778899aabbccddeeff",
+    )
 
 
 @respx.mock

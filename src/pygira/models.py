@@ -45,6 +45,7 @@ class DeviceConfig(ConfigModel):
     admin_password: str = ""
     app_username: str = ""
     app_password: str = ""
+    aes_key: str = ""
 
     @model_validator(mode="after")
     def _valid_device(self) -> "DeviceConfig":

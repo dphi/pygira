@@ -4,11 +4,13 @@ Auth: Authorization: basic <base64(user:password)>  (lowercase "basic")
 """
 
 import base64
+import gzip
 import re
 import ssl
 import time
 from dataclasses import dataclass
 
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from lxml import etree
 
 from pygira import _http as httpx
@@ -134,6 +136,67 @@ def get_tks_status(host: str, *, timeout: float = 10.0) -> TksStatus:
         if state_code
         else None,
     )
+
+
+_GZIP_MAGIC = b"\x1f\x8b"
+_AES_192_KEY_BYTES = 24
+_AES_BLOCK_BYTES = 16
+
+
+def _tks_aes_key_bytes(aes_key: str | bytes) -> bytes:
+    """Decode a 24-byte text key or its 48-character hexadecimal form."""
+    if isinstance(aes_key, bytes):
+        key = aes_key
+    elif re.fullmatch(r"[0-9a-fA-F]{48}", aes_key):
+        key = bytes.fromhex(aes_key)
+    else:
+        key = aes_key.encode()
+    if len(key) != _AES_192_KEY_BYTES:
+        msg = "TKS-IP AES key must be 24 bytes of text or 48 hexadecimal characters"
+        raise InvalidInputError(msg)
+    return key
+
+
+def decrypt_tks_logfile(content: bytes, aes_key: str | bytes) -> bytes:
+    """Decrypt the firmware's AES-192-ECB logfile format and remove zero padding."""
+    if len(content) % _AES_BLOCK_BYTES:
+        msg = "TKS-IP encrypted logfile length must be a multiple of 16 bytes"
+        raise InvalidInputError(msg)
+    decryptor = Cipher(algorithms.AES(_tks_aes_key_bytes(aes_key)), modes.ECB()).decryptor()
+    return (decryptor.update(content) + decryptor.finalize()).rstrip(b"\0")
+
+
+def download_tks_logfile(
+    host: str,
+    *,
+    timeout: float = 30.0,
+    aes_key: str | bytes | None = None,
+) -> bytes:
+    """Download the diagnostic log file from the always-on bootstrap daemon.
+
+    Unauthenticated GET on port 80 (`/getlogfile`). The daemon assembles the
+    file on demand and gives up on its own after an internal timeout (firmware
+    string: "timeout creatng downloadable logfile" — typo present in the
+    firmware), which is what previously made this endpoint unsafe to call
+    without a bound; the request timeout here is the only bound needed on the
+    client side.
+
+    Confirmed live (2026-07-20, apartment 4 gateway): the response body is
+    itself a gzip stream with **no** `Content-Encoding` header announcing it
+    — detected here by magic bytes instead. Its contents are AES-192-ECB
+    ciphertext with firmware-added zero padding. When ``aes_key`` is provided,
+    this function returns decrypted syslog text; otherwise it preserves the
+    historical behavior of returning the ciphertext after removing gzip.
+    """
+    with httpx.Client(base_url=f"http://{host}", timeout=timeout) as client:
+        resp = client.get("/getlogfile")
+        resp.raise_for_status()
+    content = resp.content
+    if content[:2] == _GZIP_MAGIC:
+        content = gzip.decompress(content)
+    if aes_key is not None:
+        content = decrypt_tks_logfile(content, aes_key)
+    return content
 
 
 def _start_tks_webinterface(host: str, timeout: float) -> float:
