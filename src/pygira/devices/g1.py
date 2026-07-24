@@ -77,9 +77,9 @@ class G1:
         """Return normalized, typed device information."""
         return self.api.get_device_info_model(force_long=long)
 
-    def diagnostic_page(self) -> dict:
+    def diagnostic_page(self, *, completely: bool = True) -> dict:
         """Return the diagnostic page from iscwebservice."""
-        return self.api.get_diagnostic_page()
+        return self.api.get_diagnostic_page(completely=completely)
 
     def diagnostic_page_model(self) -> DiagnosticPage:
         """Return normalized diagnostic sections."""

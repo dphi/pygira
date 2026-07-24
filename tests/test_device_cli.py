@@ -12,8 +12,8 @@ USAGE_ERROR_EXIT_CODE = 2
 
 
 def _device_client() -> MagicMock:
-    client = MagicMock()
-    client.get_device_info.return_value = {
+    device = MagicMock()
+    device.device_info.return_value = {
         "data": {
             "CurrentFirmwareVersion": "3.5.63",
             "MacAddress": "00:11:22:33:44:55",
@@ -24,14 +24,14 @@ def _device_client() -> MagicMock:
             "NtpInterval": "10",
         },
     }
-    client.get_diagnostic_page.return_value = {
+    device.diagnostic_page.return_value = {
         "data": {
             "diagnosticpage": [
                 {"title": "diagnostic.titles.system", "blob": "Linux test"},
             ],
         },
     }
-    return client
+    return device
 
 
 def test_detect_renders_identified_device() -> None:
@@ -65,7 +65,7 @@ def test_info_diagnostics_and_ntp_commands() -> None:
         ]
 
     assert all(result.exit_code == 0 for result in results)
-    client.set_ntp_config.assert_called_once_with(
+    client.set_ntp.assert_called_once_with(
         enabled=True,
         server="pool.ntp.org",
         interval_minutes=15,
@@ -81,7 +81,7 @@ def test_set_ip_merges_requested_network_values() -> None:
         )
 
     assert result.exit_code == 0, result.output
-    config = client.set_ip_config.call_args.args[0]
+    config = client.set_ip.call_args.args[0]
     assert config.dhcp is False
     assert config.ip_address == "192.0.2.20"
     assert config.primary_dns == "192.0.2.53"

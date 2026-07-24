@@ -43,21 +43,21 @@ class X1:
     # Inspection — shared iscwebservice commands                          #
     # ------------------------------------------------------------------ #
 
-    def device_info(self) -> dict:
+    def device_info(self, *, long: bool = False) -> dict:
         """Full device info (39 fields) including network, NTP, syslog, serial, firmware.
 
         Requires session auth (handled automatically). Returns short 3-field response
         without auth, full response with session auth.
         """
-        return self.api.get_device_info()
+        return self.api.get_device_info(force_long=long)
 
     def device_info_model(self) -> DeviceInfo:
         """Return normalized, typed device information."""
         return self.api.get_device_info_model()
 
-    def diagnostic_page(self) -> dict:
+    def diagnostic_page(self, *, completely: bool = True) -> dict:
         """Free-text diagnostic blob: running processes, system/NTP/IP info."""
-        return self.api.get_diagnostic_page()
+        return self.api.get_diagnostic_page(completely=completely)
 
     def diagnostic_page_model(self) -> DiagnosticPage:
         """Return normalized diagnostic sections."""

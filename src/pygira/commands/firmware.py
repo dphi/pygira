@@ -6,28 +6,9 @@ from typing import cast
 
 import click
 
-from pygira.context import console, resolve_login
-from pygira.devices.base import ResolvedTarget
-from pygira.devices.registry import Device, create_device
+from pygira.commands._target import resolve_device as _device
+from pygira.context import console
 from pygira.options import common_options
-
-
-def _device(
-    ip: str | None,
-    password: str | None,
-    username: str | None,
-    timeout: float,
-) -> Device:
-    profile, ip, username, password = resolve_login(ip, username, password)
-    return create_device(
-        ResolvedTarget(
-            profile=profile,
-            host=ip,
-            username=username,
-            password=password,
-            timeout=timeout,
-        ),
-    )
 
 
 @click.command("check-update")

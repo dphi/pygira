@@ -174,11 +174,11 @@ def test_device_config_rejects_unsafe_or_incomplete_entries(
 
 def test_diagnostics_preserves_missing_username_for_resolution() -> None:
     resolved = (SimpleNamespace(api_prefix="/api"), "g1.local", "device", "secret")
-    client = MagicMock()
-    client.get_diagnostic_page.return_value = {}
+    device = MagicMock()
+    device.diagnostic_page.return_value = {}
     with (
-        patch("pygira.commands.device.resolve_login", return_value=resolved) as resolve,
-        patch("pygira.commands.device.api_mod.ApiClient", return_value=client),
+        patch("pygira.commands._target.resolve_login", return_value=resolved) as resolve,
+        patch("pygira.commands._target.create_device", return_value=device),
     ):
         result = CliRunner().invoke(
             main,

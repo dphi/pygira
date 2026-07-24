@@ -8,8 +8,8 @@ import click
 from rich.table import Table
 from rich.text import Text
 
-from pygira import api as api_mod
-from pygira.context import console, resolve_login
+from pygira.commands._target import resolve_device as _device_client
+from pygira.context import console
 from pygira.core.detect import detect_device_type
 from pygira.exceptions import DeviceDetectionError
 from pygira.models import NetworkConfig
@@ -322,22 +322,6 @@ def _human_size(kb: int) -> str:
     return str(kb)
 
 
-def _device_client(
-    ip: str | None,
-    password: str | None,
-    username: str | None,
-    timeout: float,
-) -> api_mod.ApiClient:
-    profile, ip, username, password = resolve_login(ip, username, password)
-    return api_mod.ApiClient(
-        ip,
-        username,
-        password,
-        api_prefix=profile.api_prefix,
-        timeout=timeout,
-    )
-
-
 def _register_detect(main: click.Group) -> None:
     @main.command("detect")
     @click.option("--ip", prompt="Device IP address", help="Device IP address")
@@ -380,12 +364,12 @@ def _register_info(main: click.Group) -> None:
         long_info: bool,
     ) -> None:
         """Show device info: firmware version, MAC, IP config."""
-        client = _device_client(ip, password, username, timeout)
+        device = _device_client(ip, password, username, timeout)
+        result = device.device_info(long=True)
         if long_info:
-            result = client.get_device_info(force_long=True)
             console.print_json(json.dumps(result.get("data", result)))
             return
-        _print_info_table(client.get_device_info(force_long=True).get("data", {}))
+        _print_info_table(result.get("data", {}))
 
 
 def _print_info_table(data: dict) -> None:
@@ -420,13 +404,13 @@ def _register_diagnostics(main: click.Group) -> None:
     @click.option("--json", "json_output", is_flag=True, help="Output raw JSON (no formatting)")
     def diagnostics(**kwargs: object) -> None:
         """Fetch diagnostic page data from webservice."""
-        client = _device_client(
+        device = _device_client(
             cast("str | None", kwargs.get("ip")),
             cast("str | None", kwargs.get("password")),
             cast("str | None", kwargs.get("username")),
             cast("float", kwargs["timeout"]),
         )
-        result = client.get_diagnostic_page(completely=bool(kwargs["full"]))
+        result = device.diagnostic_page(completely=bool(kwargs["full"]))
         data = result.get("data", result)
         if kwargs["json_output"]:
             console.print_json(json.dumps(data))
@@ -454,7 +438,7 @@ def _register_set_ntp(main: click.Group) -> None:
     )
     def set_ntp(**kwargs: object) -> None:
         """Set NTP server configuration."""
-        client = _device_client(
+        device = _device_client(
             cast("str | None", kwargs.get("ip")),
             cast("str | None", kwargs.get("password")),
             cast("str | None", kwargs.get("username")),
@@ -463,7 +447,7 @@ def _register_set_ntp(main: click.Group) -> None:
         server = str(kwargs["server"])
         interval = cast("int", kwargs["interval_minutes"])
         enabled = bool(kwargs["enabled"])
-        client.set_ntp_config(enabled=enabled, server=server, interval_minutes=interval)
+        device.set_ntp(enabled=enabled, server=server, interval_minutes=interval)
         state = "enabled" if enabled else "disabled"
         console.print(f"[green]NTP {state}.[/green] server={server!r} interval={interval}m")
 
@@ -478,8 +462,8 @@ def _register_get_ntp(main: click.Group) -> None:
         timeout: float,
     ) -> None:
         """Show current NTP configuration."""
-        client = _device_client(ip, password, username, timeout)
-        result = client.get_device_info(force_long=True)
+        device = _device_client(ip, password, username, timeout)
+        result = device.device_info(long=True)
         data = result.get("data", result)
         ntp = {
             "Ntp": data.get("Ntp"),
@@ -517,14 +501,14 @@ def _register_set_ip(main: click.Group) -> None:
                 "--dhcp/--no-dhcp, --static-ip, --subnet, --gateway, --dns1, --dns2"
             )
             raise click.UsageError(msg)
-        client = _device_client(
+        device = _device_client(
             cast("str | None", kwargs.get("ip")),
             cast("str | None", kwargs.get("password")),
             cast("str | None", kwargs.get("username")),
             cast("float", kwargs["timeout"]),
         )
-        current = client.get_device_info(force_long=True).get("data", {})
-        client.set_ip_config(_network_config_from_kwargs(kwargs, current))
+        current = device.device_info(long=True).get("data", {})
+        device.set_ip(_network_config_from_kwargs(kwargs, current))
         console.print("[green]IP configuration updated.[/green]")
 
 
