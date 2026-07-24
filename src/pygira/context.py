@@ -97,6 +97,82 @@ def _selected_device() -> tuple[str, DeviceConfig] | None:
     raise click.UsageError(msg)
 
 
+def _prompt_configured_device(
+    device_type: DeviceType | None = None,
+) -> tuple[str, DeviceConfig] | None:
+    """Offer a keyboard-driven location/device selection before manual IP entry."""
+    ctx = click.get_current_context()
+    ctx.ensure_object(dict)
+    obj = ctx.obj
+    config_path = obj.get("config_path", "devices.toml")
+    try:
+        cfg = load_config(Path(config_path))
+    except FileNotFoundError:
+        return None
+
+    requested = device_type or obj.get("requested_device")
+    locations = [
+        (key, location)
+        for key, location in sorted(cfg.locations.items())
+        if any(
+            requested is None or _device_type(device.type) == requested
+            for device in location.devices.values()
+        )
+    ]
+    configured_location = obj.get("location")
+    if configured_location:
+        location = _find_location(cfg, configured_location)
+        if location is None:
+            msg = f"Location {configured_location!r} not found in {config_path}"
+            raise click.UsageError(msg)
+        locations = [
+            (key, candidate)
+            for key, candidate in locations
+            if candidate is location
+        ]
+        if not locations:
+            expected = requested.value if isinstance(requested, DeviceType) else "supported"
+            msg = f"Location {configured_location!r} has no configured {expected} device"
+            raise click.UsageError(msg)
+    elif not locations or not click.confirm(
+        "Select a device from the configured locations instead of entering an IP?",
+        default=True,
+    ):
+        return None
+
+    if configured_location:
+        location_key, location = locations[0]
+    else:
+        click.echo("Configured locations:")
+        for index, (key, candidate) in enumerate(locations, start=1):
+            label = f"{candidate.name} ({key})" if candidate.name else key
+            click.echo(f"  {index}. {label}")
+        location_index = click.prompt(
+            "Location",
+            type=click.IntRange(1, len(locations)),
+            default=1 if len(locations) == 1 else None,
+        )
+        location_key, location = locations[location_index - 1]
+
+    devices = [
+        (name, device)
+        for name, device in sorted(location.devices.items())
+        if requested is None or _device_type(device.type) == requested
+    ]
+    click.echo("Configured devices:")
+    for index, (name, device) in enumerate(devices, start=1):
+        click.echo(f"  {index}. {name} ({device.type.value}, {device.address})")
+    device_index = click.prompt(
+        "Device",
+        type=click.IntRange(1, len(devices)),
+        default=1 if len(devices) == 1 else None,
+    )
+    device_name, device = devices[device_index - 1]
+    obj["location"] = location_key
+    obj["device_name"] = device_name
+    return device_name, device
+
+
 def _device_login(device: DeviceConfig) -> tuple[str, str, str, DeviceType]:
     """Convert a config device into host, username, password, and type."""
     device_type = _device_type(device.type)
@@ -172,16 +248,23 @@ def _selected_tks_device() -> DeviceConfig | None:
     return None
 
 
-def resolve_tks_ip(tks_ip: str | None, *, prompt_on_ambiguous: bool = False) -> str:
+def _selected_or_prompted_tks_device() -> DeviceConfig | None:
+    """Resolve one TKS-IP config, prompting when location/device choice is ambiguous."""
+    try:
+        return _selected_tks_device()
+    except click.UsageError:
+        ctx = click.get_current_context()
+        if (ctx.obj or {}).get("device_name"):
+            raise
+        selected = _prompt_configured_device(DeviceType.TKS_IP)
+        return selected[1] if selected is not None else None
+
+
+def resolve_tks_ip(tks_ip: str | None) -> str:
     """Resolve a TKS-IP host from --tks-ip, config, or prompt."""
     if tks_ip:
         return tks_ip
-    try:
-        device = _selected_tks_device()
-    except click.UsageError:
-        if not prompt_on_ambiguous:
-            raise
-        device = None
+    device = _selected_or_prompted_tks_device()
     if device is not None:
         return device.address
     return click.prompt("TKS-IP gateway IP address")
@@ -243,7 +326,7 @@ def resolve_tks_login(
     tks_pass: str | None,
 ) -> tuple[str, str, str]:
     """Resolve TKS-IP gateway host + web-login credentials."""
-    device = _selected_tks_device() if not (tks_ip and tks_user and tks_pass) else None
+    device = _selected_or_prompted_tks_device() if not (tks_ip and tks_user and tks_pass) else None
     if device is not None:
         host, username, password, _ = _device_login(device)
         tks_ip = tks_ip or host
@@ -263,8 +346,11 @@ def resolve_login(
 ) -> tuple[DeviceProfile, str, str, str]:
     """Resolve device profile and effective username from config, options, or prompts."""
     ctx = click.get_current_context()
-    obj = ctx.obj or {}
+    ctx.ensure_object(dict)
+    obj = ctx.obj
     selected = _selected_device()
+    if selected is None and not ip:
+        selected = _prompt_configured_device()
     if selected is not None:
         _, device = selected
         cfg_ip, cfg_username, cfg_password, cfg_type = _device_login(device)

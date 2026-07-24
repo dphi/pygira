@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.text import Text
 
 from pygira.commands._target import resolve_device as _device_client
-from pygira.context import console
+from pygira.context import _device_login, _prompt_configured_device, console
 from pygira.core.detect import detect_device_type
 from pygira.exceptions import DeviceDetectionError
 from pygira.models import NetworkConfig
@@ -324,12 +324,22 @@ def _human_size(kb: int) -> str:
 
 def _register_detect(main: click.Group) -> None:
     @main.command("detect")
-    @click.option("--ip", prompt="Device IP address", help="Device IP address")
-    @click.option("--username", default="admin", show_default=True, help="Device username")
-    @click.option("--password", default="", help="Device password (optional)")
-    def detect(ip: str, username: str, password: str) -> None:
+    @click.option("--ip", default=None, help="Device IP address")
+    @click.option("--username", default=None, help="Device username (default: admin)")
+    @click.option("--password", default=None, help="Device password (optional)")
+    def detect(ip: str | None, username: str | None, password: str | None) -> None:
         """Detect device model and firmware (tries unauthenticated probe first)."""
-        result = detect_device_type(ip, username or "", password)
+        selected = _prompt_configured_device() if not ip else None
+        if selected is not None:
+            configured_ip, configured_user, configured_password, _ = _device_login(
+                selected[1],
+            )
+            ip = configured_ip
+            username = username or configured_user
+            password = password or configured_password
+
+        resolved_ip = ip or click.prompt("Device IP address")
+        result = detect_device_type(resolved_ip, username or "admin", password or "")
 
         if result.device_type.value == "unknown":
             msg = f"Could not detect device type. Evidence: {result.evidence}"

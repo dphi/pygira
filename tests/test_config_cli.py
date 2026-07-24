@@ -307,6 +307,100 @@ admin_password = "secret"
     assert password == "secret"
 
 
+def test_resolve_login_can_select_location_then_device(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        """
+[locations.home]
+name = "Home"
+
+[locations.home.devices.panel]
+type = "g1"
+host = "g1.home"
+password = "home-secret"
+
+[locations.home.devices.controller]
+type = "x1"
+host = "x1.home"
+admin_password = "x1-secret"
+
+[locations.office]
+name = "Office"
+
+[locations.office.devices.panel]
+type = "g1"
+host = "g1.office"
+password = "office-secret"
+""".strip(),
+    )
+
+    @click.command()
+    def resolve() -> None:
+        profile, host, username, password = resolve_login(None, None, None)
+        click.echo(f"{profile.device_type.value}|{host}|{username}|{password}")
+
+    with patch(
+        "pygira.context.detect_device_type",
+        return_value=DetectionResult(DeviceType.G1, "test"),
+    ):
+        result = CliRunner().invoke(
+            resolve,
+            input="y\n2\n1\n",
+            obj={
+                "config_path": str(path),
+                "device_name": None,
+                "location": None,
+                "requested_device": DeviceType.G1,
+            },
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "1. Home (home)" in result.output
+    assert "2. Office (office)" in result.output
+    assert "controller" not in result.output
+    assert "1. panel (g1, g1.office)" in result.output
+    assert "g1|g1.office|device|office-secret" in result.output
+
+
+def test_resolve_login_can_decline_configured_device_selection(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        """
+[locations.home]
+name = "Home"
+
+[locations.home.devices.panel]
+type = "g1"
+host = "g1.home"
+password = "home-secret"
+""".strip(),
+    )
+
+    @click.command()
+    def resolve() -> None:
+        _profile, host, _username, password = resolve_login(None, None, None)
+        click.echo(f"{host}|{password}")
+
+    with patch(
+        "pygira.context.detect_device_type",
+        return_value=DetectionResult(DeviceType.G1, "test"),
+    ):
+        result = CliRunner().invoke(
+            resolve,
+            input="n\n192.0.2.40\nmanual-secret\n",
+            obj={
+                "config_path": str(path),
+                "device_name": None,
+                "location": None,
+                "requested_device": DeviceType.G1,
+            },
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Device IP address" in result.output
+    assert "192.0.2.40|manual-secret" in result.output
+
+
 def test_resolve_tks_aes_key_precedence(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(

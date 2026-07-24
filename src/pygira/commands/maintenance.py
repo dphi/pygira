@@ -20,6 +20,7 @@ from pygira import weather as weather_mod
 from pygira.commands._target import resolve_device as _device_client
 from pygira.context import (
     _device_type,
+    _prompt_configured_device,
     _selected_device,
     console,
     require_capability,
@@ -379,7 +380,7 @@ def _register_pull_logs(main: click.Group) -> None:
         output = cast("str | None", kwargs.get("output"))
         target = _log_target(ip, username, password)
         if target.device_type == DeviceType.TKS_IP:
-            host = resolve_tks_ip(target.host or ip, prompt_on_ambiguous=True)
+            host = resolve_tks_ip(target.host or ip)
             data = cs.download_tks_logfile(
                 host,
                 aes_key=resolve_tks_aes_key(aes_key, host=host),
@@ -399,6 +400,8 @@ def _log_target(
 ) -> _LogTarget:
     """Resolve the log-source type before asking for device-specific credentials."""
     selected = _selected_device()
+    if selected is None and not ip:
+        selected = _prompt_configured_device()
     if selected is not None:
         device = selected[1]
         return _LogTarget(_device_type(device.type), ip or device.address)
@@ -517,10 +520,7 @@ def _register_tail_logs(main: click.Group) -> None:
         with suppress(KeyboardInterrupt, click.exceptions.Abort):
             target = _log_target(ip, username, password)
             if target.device_type == DeviceType.TKS_IP:
-                host = resolve_tks_ip(
-                    target.host or ip,
-                    prompt_on_ambiguous=True,
-                )
+                host = resolve_tks_ip(target.host or ip)
                 resolved_key = resolve_tks_aes_key(aes_key, host=host)
                 data = cs.download_tks_logfile(host, aes_key=resolved_key)
                 tks_seen: dict[str, int] = {}

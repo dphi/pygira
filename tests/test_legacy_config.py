@@ -7,7 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from pygira.cli import main
-from pygira.context import _selected_tks_device
+from pygira.context import _selected_tks_device, resolve_tks_login
 from pygira.core.types import DeviceType
 from pygira.models import load_config
 
@@ -31,9 +31,6 @@ ip = "192.0.2.12"
 username = "admin"
 password = "tks-secret"
 """
-USAGE_ERROR = 2
-
-
 def test_load_config_normalizes_legacy_apartments(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(LEGACY_CONFIG)
@@ -61,15 +58,37 @@ def test_location_can_be_selected_by_apartment_name(tmp_path: Path) -> None:
     assert device.address == "192.0.2.12"
 
 
-def test_multiple_tks_gateways_have_an_actionable_error(tmp_path: Path) -> None:
+def test_multiple_tks_gateways_can_be_selected_by_location(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
-    path.write_text(LEGACY_CONFIG + LEGACY_CONFIG.replace("id = 17", "id = 18"))
+    path.write_text(
+        LEGACY_CONFIG
+        + LEGACY_CONFIG.replace("id = 17", "id = 18").replace(
+            'ip = "192.0.2.12"',
+            'ip = "192.0.2.22"',
+        ),
+    )
 
-    result = CliRunner().invoke(main, ["--config", str(path), "tks", "info"])
+    @click.command()
+    def resolve() -> None:
+        host, username, password = resolve_tks_login(None, None, None)
+        click.echo(f"{host}|{username}|{password}")
 
-    assert result.exit_code == USAGE_ERROR
-    assert "Multiple TKS-IP gateways are configured" in result.output
-    assert "--location <apartment-id-or-name> before the command" in result.output
+    result = CliRunner().invoke(
+        resolve,
+        input="y\n2\n\n",
+        obj={
+            "config_path": str(path),
+            "location": None,
+            "device_name": None,
+            "requested_device": None,
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "1. North (17)" in result.output
+    assert "2. North (18)" in result.output
+    assert "1. tks_ip (tks-ip, 192.0.2.22)" in result.output
+    assert "192.0.2.22|admin|tks-secret" in result.output
 
 
 def test_legacy_apartment_ids_must_be_unique(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 """CLI coverage for device inspection and configuration commands."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -50,6 +51,38 @@ def test_detect_reports_unknown_device_as_cli_error() -> None:
 
     assert result.exit_code == 1
     assert "Could not detect" in result.output
+
+
+def test_detect_can_select_a_configured_location_and_device(tmp_path: Path) -> None:
+    config_path = tmp_path / "devices.toml"
+    config_path.write_text(
+        """
+[locations.home]
+name = "Home"
+
+[locations.home.devices.panel]
+type = "g1"
+host = "g1.home"
+username = "configured-user"
+password = "configured-secret"
+""".strip(),
+    )
+    detected = DetectionResult(DeviceType.G1, "/api AppName=Gira G1")
+
+    with patch(
+        "pygira.commands.device.detect_device_type",
+        return_value=detected,
+    ) as detect_device:
+        result = CliRunner().invoke(
+            main,
+            ["--config", str(config_path), "device", "detect"],
+            input="y\n\n\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "1. Home (home)" in result.output
+    assert "1. panel (g1, g1.home)" in result.output
+    detect_device.assert_called_once_with("g1.home", "configured-user", "configured-secret")
 
 
 def test_info_diagnostics_and_ntp_commands() -> None:
