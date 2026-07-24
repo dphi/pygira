@@ -9,6 +9,8 @@ from pygira import _http as httpx
 from pygira import config_service as cs
 from pygira.core.types import DeviceType
 
+_TKS_IP_ASSET_MARKER = b"com.gira.tkipgw.web.sites"
+
 
 @dataclass(frozen=True)
 class ProbeAttempt:
@@ -89,14 +91,40 @@ def _try_json_probe(
     return result, ProbeAttempt(path, "matched", result.evidence)
 
 
+def _try_tks_ip_probe(host: str) -> tuple[DetectionResult | None, ProbeAttempt]:
+    """Identify a TKS-IP from its passive port-80 bootstrap document."""
+    path = "/"
+    try:
+        with httpx.Client(base_url=f"http://{host}", timeout=8.0) as client:
+            resp = client.get(path)
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        return None, ProbeAttempt(path, "failed", _failure_detail(exc))
+
+    content = resp.content
+    if not isinstance(content, bytes):
+        return None, ProbeAttempt(path, "invalid", "response body was not bytes")
+    if _TKS_IP_ASSET_MARKER not in content.lower():
+        return None, ProbeAttempt(path, "inconclusive", "TKS-IP asset marker not found")
+
+    evidence = f"{path} asset-marker={_TKS_IP_ASSET_MARKER.decode()}"
+    result = DetectionResult(DeviceType.TKS_IP, evidence)
+    return result, ProbeAttempt(path, "matched", evidence)
+
+
 def detect_device_type(host: str, username: str, password: str) -> DetectionResult:
-    """Detect Gira device family — JSON probes first, configurationservice XML as fallback."""
+    """Detect a Gira device family with passive, evidence-bearing probes."""
     attempts: list[ProbeAttempt] = []
     probe, attempt = _try_json_probe(host, username, password, "/webservice")
     attempts.append(attempt)
     if probe is None:
         probe, attempt = _try_json_probe(host, username, password, "/api")
         attempts.append(attempt)
+    if probe is not None:
+        return replace(probe, attempts=tuple(attempts))
+
+    probe, attempt = _try_tks_ip_probe(host)
+    attempts.append(attempt)
     if probe is not None:
         return replace(probe, attempts=tuple(attempts))
 

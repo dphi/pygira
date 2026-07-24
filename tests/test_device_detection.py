@@ -9,6 +9,7 @@ from pygira.core.detect import DetectionResult, ProbeAttempt, detect_device_type
 from pygira.core.resolve import resolve_device_type
 from pygira.core.types import DeviceType
 from pygira.exceptions import DeviceDetectionError
+from tests import _httpmock as respx
 from tests._httpmock import Request, Response
 
 
@@ -97,6 +98,49 @@ def test_detect_device_falls_back_to_api_probe_for_g1() -> None:
     )
 
 
+@respx.mock
+def test_detect_device_tks_ip_from_bootstrap_asset_marker() -> None:
+    respx.post("http://host/webservice").mock(return_value=Response(404))
+    respx.post("http://host/api").mock(return_value=Response(404))
+    respx.get("http://host/").mock(
+        return_value=Response(
+            200,
+            text='<link href="css/sites/0.104/com.gira.tkipgw.web.sites.min.css">',
+        ),
+    )
+
+    with patch("pygira.core.detect.cs.get_device_xml") as get_device_xml:
+        result = detect_device_type("host", "", "")
+
+    assert result.device_type == DeviceType.TKS_IP
+    assert result.evidence == "/ asset-marker=com.gira.tkipgw.web.sites"
+    assert [attempt.endpoint for attempt in result.attempts] == [
+        "/webservice",
+        "/api",
+        "/",
+    ]
+    get_device_xml.assert_not_called()
+
+
+@respx.mock
+def test_detect_device_does_not_treat_generic_web_page_as_tks_ip() -> None:
+    respx.post("http://host/webservice").mock(return_value=Response(404))
+    respx.post("http://host/api").mock(return_value=Response(404))
+    respx.get("http://host/").mock(
+        return_value=Response(200, text="<title>Some web interface</title>"),
+    )
+
+    with patch("pygira.core.detect.cs.get_device_xml", return_value=_xml("", "GiraX1")):
+        result = detect_device_type("host", "", "")
+
+    assert result.device_type == DeviceType.X1
+    assert result.attempts[-2] == ProbeAttempt(
+        "/",
+        "inconclusive",
+        "TKS-IP asset marker not found",
+    )
+
+
 def test_detect_device_reports_each_expected_probe_failure() -> None:
     with (
         patch(
@@ -118,6 +162,7 @@ def test_detect_device_reports_each_expected_probe_failure() -> None:
     assert [attempt.endpoint for attempt in result.attempts] == [
         "/webservice",
         "/api",
+        "/",
         "configurationservice",
     ]
     assert "response was not a JSON object" in result.evidence

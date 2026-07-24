@@ -7,6 +7,7 @@ import uuid
 import zipfile
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import ParamSpec, TypeVar, cast
@@ -27,6 +28,7 @@ from pygira.context import (
     resolve_tks_ip,
     resolve_tks_login,
 )
+from pygira.core.detect import detect_device_type
 from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.exceptions import UnsupportedCapabilityError
@@ -43,6 +45,14 @@ TKS_LOGIN_OPTIONS = [
     click.option("--tks-user", default=None, help="TKS-IP gateway username"),
     click.option("--tks-pass", default=None, help="TKS-IP gateway password"),
 ]
+
+
+@dataclass(frozen=True)
+class _LogTarget:
+    """Log-source family and any host resolved while detecting it."""
+
+    device_type: DeviceType
+    host: str | None
 
 
 def _tks_login_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
@@ -367,34 +377,46 @@ def _register_pull_logs(main: click.Group) -> None:
         timeout = cast("float", kwargs["timeout"])
         aes_key = cast("str | None", kwargs.get("aes_key"))
         output = cast("str | None", kwargs.get("output"))
-        if _log_target_type() == DeviceType.TKS_IP:
-            host = resolve_tks_ip(ip, prompt_on_ambiguous=True)
+        target = _log_target(ip, username, password)
+        if target.device_type == DeviceType.TKS_IP:
+            host = resolve_tks_ip(target.host or ip, prompt_on_ambiguous=True)
             data = cs.download_tks_logfile(
                 host,
                 aes_key=resolve_tks_aes_key(aes_key, host=host),
             )
             output = output or "tks-logs.dat"
         else:
-            data = _device_client(ip, password, username, timeout).logfile()
+            data = _device_client(target.host or ip, password, username, timeout).logfile()
             output = output or "pygira-logs.zip"
         Path(output).write_bytes(data)
         console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
 
 
-def _log_target_type() -> DeviceType:
+def _log_target(
+    ip: str | None,
+    username: str | None,
+    password: str | None,
+) -> _LogTarget:
     """Resolve the log-source type before asking for device-specific credentials."""
     selected = _selected_device()
     if selected is not None:
-        return _device_type(selected[1].type)
+        device = selected[1]
+        return _LogTarget(_device_type(device.type), ip or device.address)
     ctx = click.get_current_context()
     requested = (ctx.find_root().obj or {}).get("requested_device")
     if requested is not None:
-        return cast("DeviceType", requested)
+        return _LogTarget(cast("DeviceType", requested), ip)
+
+    host = ip or click.prompt("Device IP address")
+    detected = detect_device_type(host, username or "", password or "")
+    if detected.device_type != DeviceType.UNKNOWN:
+        return _LogTarget(detected.device_type, host)
+
     selected_type = click.prompt(
         "Log source device type",
         type=click.Choice(["g1", "x1", "tks-ip"], case_sensitive=False),
     )
-    return DeviceType(selected_type)
+    return _LogTarget(DeviceType(selected_type), host)
 
 
 def _fetch_tail_logs(
@@ -488,11 +510,15 @@ def _register_tail_logs(main: click.Group) -> None:
         files = cast("tuple[str, ...]", kwargs["files"])
         lines = cast("int", kwargs["lines"])
         aes_key = cast("str | None", kwargs["aes_key"])
+        ip = cast("str | None", kwargs.get("ip"))
+        username = cast("str | None", kwargs.get("username"))
+        password = cast("str | None", kwargs.get("password"))
 
         with suppress(KeyboardInterrupt, click.exceptions.Abort):
-            if _log_target_type() == DeviceType.TKS_IP:
+            target = _log_target(ip, username, password)
+            if target.device_type == DeviceType.TKS_IP:
                 host = resolve_tks_ip(
-                    cast("str | None", kwargs.get("ip")),
+                    target.host or ip,
                     prompt_on_ambiguous=True,
                 )
                 resolved_key = resolve_tks_aes_key(aes_key, host=host)
@@ -506,9 +532,9 @@ def _register_tail_logs(main: click.Group) -> None:
                     _print_new_lines(_tks_text_files(data, files), tks_seen, 0)
 
             profile, ip, username, password = resolve_login(
-                cast("str | None", kwargs.get("ip")),
-                cast("str | None", kwargs.get("username")),
-                cast("str | None", kwargs.get("password")),
+                target.host or ip,
+                username,
+                password,
             )
             # First fetch — establish baseline (optionally show tail of existing content).
             data = _fetch_tail_logs(profile, ip, username, password, timeout)

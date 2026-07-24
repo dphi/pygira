@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from pygira.cli import main
+from pygira.commands.maintenance import _LogTarget
+from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
 
 
@@ -36,7 +38,10 @@ def test_logs_pull_uses_same_command_for_g1_and_x1(tmp_path: Path) -> None:
     device.logfile.return_value = b"logs"
 
     with (
-        patch("pygira.commands.maintenance._log_target_type", return_value=DeviceType.G1),
+        patch(
+            "pygira.commands.maintenance._log_target",
+            return_value=_LogTarget(DeviceType.G1, None),
+        ),
         patch("pygira.commands.maintenance._device_client", return_value=device),
     ):
         result = CliRunner().invoke(main, ["logs", "pull", "--output", str(output)])
@@ -49,7 +54,10 @@ def test_logs_pull_uses_same_command_for_tks_ip(tmp_path: Path) -> None:
     output = tmp_path / "tks-logs.dat"
 
     with (
-        patch("pygira.commands.maintenance._log_target_type", return_value=DeviceType.TKS_IP),
+        patch(
+            "pygira.commands.maintenance._log_target",
+            return_value=_LogTarget(DeviceType.TKS_IP, None),
+        ),
         patch("pygira.commands.maintenance.resolve_tks_ip", return_value="192.0.2.20"),
         patch("pygira.commands.maintenance.resolve_tks_aes_key", return_value="key"),
         patch(
@@ -83,6 +91,13 @@ password = "web-secret"
     with (
         patch.dict(os.environ, {}, clear=True),
         patch("pygira.context.dotenv_values", return_value={}),
+        patch(
+            "pygira.commands.maintenance.detect_device_type",
+            return_value=DetectionResult(
+                DeviceType.TKS_IP,
+                "/ asset-marker=com.gira.tkipgw.web.sites",
+            ),
+        ),
         patch("pygira.commands.maintenance.resolve_login") as resolve_login,
         patch("pygira.commands.maintenance.cs.download_tks_logfile", download),
         patch("pygira.commands.maintenance.time.sleep"),
@@ -90,12 +105,12 @@ password = "web-secret"
         result = CliRunner().invoke(
             main,
             ["--config", str(config_path), "logs", "tail"],
-            input="tks-ip\n192.0.2.20\n0123456789abcdefghijklmn\n",
+            input="192.0.2.20\n0123456789abcdefghijklmn\n",
         )
 
     assert result.exit_code == 0, result.output
-    assert "Log source device type" in result.output
-    assert "TKS-IP gateway IP address" in result.output
+    assert "Device IP address" in result.output
+    assert "Log source device type" not in result.output
     assert "TKS-IP logfile AES key" in result.output
     assert "password" not in result.output.casefold()
     resolve_login.assert_not_called()
@@ -124,6 +139,13 @@ aes_key = "other-key"
     with (
         patch.dict(os.environ, {}, clear=True),
         patch("pygira.context.dotenv_values", return_value={}),
+        patch(
+            "pygira.commands.maintenance.detect_device_type",
+            return_value=DetectionResult(
+                DeviceType.TKS_IP,
+                "/ asset-marker=com.gira.tkipgw.web.sites",
+            ),
+        ),
         patch("pygira.commands.maintenance.resolve_login") as resolve_login,
         patch("pygira.commands.maintenance.cs.download_tks_logfile", download),
         patch("pygira.commands.maintenance.time.sleep"),
@@ -131,7 +153,7 @@ aes_key = "other-key"
         result = CliRunner().invoke(
             main,
             ["--config", str(config_path), "logs", "tail"],
-            input="tks-ip\n192.0.2.20\n",
+            input="192.0.2.20\n",
         )
 
     assert result.exit_code == 0, result.output
