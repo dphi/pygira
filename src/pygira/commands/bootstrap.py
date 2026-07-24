@@ -1,6 +1,7 @@
 """Bootstrap command."""
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import cast
 
 import click
@@ -9,6 +10,7 @@ from pygira import api as api_mod
 from pygira import weather as weather_mod
 from pygira.context import console, err, resolve_login
 from pygira.devices.base import DeviceProfile
+from pygira.exceptions import InvalidInputError, PygiraError
 from pygira.gds import GdsClient, run_gds
 from pygira.models import NetworkConfig, WeatherStation
 from pygira.operations import NetworkPatch, build_weather_settings, merge_network_config
@@ -19,6 +21,28 @@ _STEP_HINTS = (
     "  Step 2 (TKS-IP):  --tks-ip, --tks-user, --tks-pass",
     "  Step 3 (weather): --weather-zip [--weather-country]",
 )
+
+
+class StepStatus(Enum):
+    """Outcome of one bootstrap step."""
+
+    SUCCEEDED = "succeeded"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class BootstrapStep:
+    """Structured bootstrap step outcome."""
+
+    name: str
+    status: StepStatus
+    detail: str = ""
+
+    @property
+    def succeeded(self) -> bool:
+        """Return whether the step completed successfully."""
+        return self.status == StepStatus.SUCCEEDED
 
 
 @dataclass(frozen=True)
@@ -91,11 +115,11 @@ def _configure_network(
     ip: str,
     username: str,
     password: str,
-) -> bool:
+) -> BootstrapStep:
     if not opts.has_network_flags:
         console.print("[dim]Step 1: Skipped — pass network flags to enable:[/dim]")
         console.print(f"[dim]{_STEP_HINTS[0]}[/dim]")
-        return False
+        return BootstrapStep("network", StepStatus.SKIPPED)
 
     console.print("[bold]Step 1:[/bold] Configuring network…")
     try:
@@ -109,12 +133,12 @@ def _configure_network(
         )
         current = client.get_device_info(force_long=True).get("data", {})
         client.set_ip_config(_network_config(opts, current))
-    except Exception as e:
+    except PygiraError as e:
         err.print(f"  [red]✗ IP config failed:[/red] {e}")
-        return False
+        return BootstrapStep("network", StepStatus.FAILED, str(e))
     else:
         console.print("  [green]✓[/green] IP config set")
-        return True
+        return BootstrapStep("network", StepStatus.SUCCEEDED)
 
 
 def _configure_tks(
@@ -123,36 +147,36 @@ def _configure_tks(
     ip: str,
     username: str,
     password: str,
-) -> bool:
+) -> BootstrapStep:
     if not (opts.tks_ip and opts.tks_user and opts.tks_pass):
         console.print("[dim]Step 2: Skipped — pass gateway flags to enable:[/dim]")
         console.print(f"[dim]{_STEP_HINTS[1]}[/dim]")
-        return False
+        return BootstrapStep("tks", StepStatus.SKIPPED)
 
     console.print("[bold]Step 2:[/bold] Configuring TKS-IP gateway…")
     capabilities = profile.capabilities
     display_name = profile.display_name
     if not capabilities.tks:
         err.print(f"  [red]✗ TKS-IP unsupported on {display_name}[/red]")
-        return False
+        return BootstrapStep("tks", StepStatus.FAILED, f"unsupported on {display_name}")
 
     async def _tks(client: GdsClient) -> None:
         await client.configure_tks(opts.tks_ip or "", opts.tks_user or "", opts.tks_pass or "")
 
     try:
         run_gds(ip, username, password, _tks, timeout=opts.timeout)
-    except Exception as e:
+    except PygiraError as e:
         err.print(f"  [red]✗ TKS-IP failed:[/red] {e}")
-        return False
+        return BootstrapStep("tks", StepStatus.FAILED, str(e))
     else:
         console.print("  [green]✓[/green] TKS-IP configured")
-        return True
+        return BootstrapStep("tks", StepStatus.SUCCEEDED)
 
 
 def _require_station(station: WeatherStation | None, zip_code: str) -> WeatherStation:
     if station is None:
         msg = f"No station found for {zip_code!r}"
-        raise ValueError(msg)
+        raise InvalidInputError(msg)
     return station
 
 
@@ -162,18 +186,18 @@ def _configure_weather(
     ip: str,
     username: str,
     password: str,
-) -> bool:
+) -> BootstrapStep:
     if not opts.weather_zip:
         console.print("[dim]Step 3: Skipped — pass weather flags to enable:[/dim]")
         console.print(f"[dim]{_STEP_HINTS[2]}[/dim]")
-        return False
+        return BootstrapStep("weather", StepStatus.SKIPPED)
 
     console.print("[bold]Step 3:[/bold] Configuring weather…")
     capabilities = profile.capabilities
     display_name = profile.display_name
     if not capabilities.weather:
         err.print(f"  [red]✗ Weather unsupported on {display_name}[/red]")
-        return False
+        return BootstrapStep("weather", StepStatus.FAILED, f"unsupported on {display_name}")
 
     try:
         station = _require_station(
@@ -186,12 +210,12 @@ def _configure_weather(
             await client.set_app_value("Gira.G1", "weather.settings", settings_json)
 
         run_gds(ip, username, password, _weather, timeout=opts.timeout)
-    except Exception as e:
+    except PygiraError as e:
         err.print(f"  [red]✗ Weather failed:[/red] {e}")
-        return False
+        return BootstrapStep("weather", StepStatus.FAILED, str(e))
     else:
         console.print(f"  [green]✓[/green] Weather set to {station.label} ({station.station_id})")
-        return True
+        return BootstrapStep("weather", StepStatus.SUCCEEDED)
 
 
 @click.command()
@@ -211,15 +235,17 @@ def bootstrap(**kwargs: object) -> None:
     """Full bootstrap: set IP config, TKS-IP, and weather in one step."""
     opts = BootstrapOptions.from_kwargs(kwargs)
     profile, ip, username, password = resolve_login(opts.ip, opts.username, opts.password)
-    steps_done = sum(
-        [
-            _configure_network(profile, opts, ip, username, password),
-            _configure_tks(profile, opts, ip, username, password),
-            _configure_weather(profile, opts, ip, username, password),
-        ],
-    )
+    steps = [
+        _configure_network(profile, opts, ip, username, password),
+        _configure_tks(profile, opts, ip, username, password),
+        _configure_weather(profile, opts, ip, username, password),
+    ]
+    steps_done = sum(step.succeeded for step in steps)
+    failures = [step.name for step in steps if step.status == StepStatus.FAILED]
 
     console.print(f"\nDone — [bold]{steps_done}[/bold] step(s) completed.")
+    if failures:
+        console.print(f"[yellow]Failed steps:[/yellow] {', '.join(failures)}")
     if steps_done == 0:
         console.print(
             "[dim]Run [bold]pygira bootstrap --help[/bold] to see all available flags.[/dim]",

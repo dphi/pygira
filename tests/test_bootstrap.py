@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 from pygira.cli import main
 from pygira.devices.g1 import PROFILE
+from pygira.exceptions import TransportError
 from pygira.gds import GdsClient
 from pygira.models import WeatherStation
 
@@ -70,14 +71,14 @@ def test_bootstrap_without_step_options_reports_all_skipped() -> None:
 
 def test_bootstrap_continues_after_step_failures() -> None:
     api = MagicMock()
-    api.get_device_info.side_effect = RuntimeError("network failed")
+    api.get_device_info.side_effect = TransportError("network failed")
     login = (PROFILE, "192.0.2.10", "device", "secret")
 
     with (
         patch("pygira.commands.bootstrap.resolve_login", return_value=login),
         patch("pygira.commands.bootstrap.api_mod.ApiClient", return_value=api),
         patch("pygira.commands.bootstrap.weather_mod.find_station", return_value=None),
-        patch("pygira.commands.bootstrap.run_gds", side_effect=RuntimeError("GDS failed")),
+        patch("pygira.commands.bootstrap.run_gds", side_effect=TransportError("GDS failed")),
     ):
         result = CliRunner().invoke(
             main,
@@ -97,3 +98,20 @@ def test_bootstrap_continues_after_step_failures() -> None:
 
     assert result.exit_code == 0, result.output
     assert "0" in result.output
+    assert "network, tks, weather" in result.output
+
+
+def test_bootstrap_does_not_hide_programming_errors() -> None:
+    api = MagicMock()
+    api.get_device_info.side_effect = RuntimeError("programming bug")
+    login = (PROFILE, "192.0.2.10", "device", "secret")
+
+    with (
+        patch("pygira.commands.bootstrap.resolve_login", return_value=login),
+        patch("pygira.commands.bootstrap.api_mod.ApiClient", return_value=api),
+    ):
+        result = CliRunner().invoke(main, ["bootstrap", "--dhcp"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert str(result.exception) == "programming bug"
