@@ -37,9 +37,15 @@ _UNVERIFIED.verify_mode = ssl.CERT_NONE
 
 
 class Response:
-    def __init__(self, status_code: int, content: bytes) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        content: bytes,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.content = content
+        self.headers = headers or {}
 
     def json(self: "Response") -> object:
         return _json.loads(self.content)
@@ -69,8 +75,9 @@ class Client:
             token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
             self._headers.setdefault("Authorization", f"Basic {token}")
         self._certificate_fingerprint = self._normalize_fingerprint(certificate_fingerprint)
+        self._cookie_jar = CookieJar()
         handlers: list[urllib.request.BaseHandler] = [
-            urllib.request.HTTPCookieProcessor(CookieJar()),
+            urllib.request.HTTPCookieProcessor(self._cookie_jar),
         ]
         if isinstance(verify, ssl.SSLContext):
             handlers.append(urllib.request.HTTPSHandler(context=verify))
@@ -116,6 +123,14 @@ class Client:
     ) -> Literal[False]:
         return False
 
+    def _cookie_value(self, name: str) -> str | None:
+        """Return a session cookie value for an internal protocol client."""
+        expected = name.casefold()
+        return next(
+            (cookie.value for cookie in self._cookie_jar if cookie.name.casefold() == expected),
+            None,
+        )
+
     def _url(self, path: str, params: dict[str, object] | None = None) -> str:
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         if params:
@@ -142,10 +157,10 @@ class Client:
         try:
             with self._opener.open(req, timeout=self.timeout) as resp:
                 self._validate_peer_certificate(resp)
-                return Response(resp.status, resp.read())
+                return Response(resp.status, resp.read(), dict(resp.headers.items()))
         except urllib.error.HTTPError as e:
             # 4xx/5xx: a response, not a failure yet — surfaced via raise_for_status.
-            return Response(e.code, e.read())
+            return Response(e.code, e.read(), dict(e.headers.items()))
         except (urllib.error.URLError, OSError) as e:
             raise HTTPError(str(e)) from e
 

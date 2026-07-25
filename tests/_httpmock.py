@@ -23,13 +23,14 @@ HTTP_ERROR_STATUS = 400
 
 
 class Response:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - mirrors the HTTP response test surface
         self,
         status_code: int = 200,
         *,
         json: object = None,
         content: bytes | None = None,
         text: str | None = None,
+        headers: dict[str, str] | None = None,
         request: "Request | None" = None,
     ) -> None:
         self.status_code = status_code
@@ -41,6 +42,7 @@ class Response:
             self.content = _json.dumps(json).encode()
         else:
             self.content = b""
+        self.headers = headers or {}
         self.request = request
 
     def json(self) -> object:

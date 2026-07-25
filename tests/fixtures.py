@@ -177,8 +177,12 @@ decodeCommand(0,6,"287aca0a-9de4-4cc1-9028-8471048eb545",0);});</script></head><
 """
 
 TKS_LOGIN_HTML = """\
-<div class="lLDCName"><div id="c61"><input type="text" /></div></div>
-<div class="lLDCPassword"><div id="c62"><input type="password" /></div></div>
+<div class="lLDCName"><div id="c61">
+  <div class="ui-textbox-center"><input type="text" /></div>
+</div></div>
+<div class="lLDCPassword"><div id="c62">
+  <div class="ui-textbox-center"><input type="password" /></div>
+</div></div>
 <div class="lLLoginButton"><div id="c66"><button><span>Anmelden</span></button></div></div>
 """
 
@@ -186,4 +190,43 @@ TKS_SYSTEM_HTML = """\
 <div class="aBSaveButton"><div id="c104"><button>Sichern</button></div></div>
 <div class="aBRestoreButton"><div id="c107"><button>Wiederherstellen</button></div></div>
 <div class="aUSUpdateButton"><div id="c114"><button>Aktualisieren</button></div></div>
+"""
+
+# Trimmed from the Übersicht (Overview) menu's Administration group row —
+# these <a> links share no distinguishing CSS class, only label text, and all
+# converge on the combined Administration assistant page (2026-07-04 HAR).
+TKS_OVERVIEW_HTML = """\
+<div id="i112" class="mainMenu"><div id="i113" class="mmTable"><table id="c67">
+<tr id="e13" class="ui-single"><td class="mmTableEntry cell0"><div class="ui-label">
+<a id="l5"><span class="ui-text-style-default">Sicherung / Wiederherstellung</span></a>
+<a id="l6"><span class="ui-text-style-default">Update</span></a>
+<a id="l7"><span class="ui-text-style-default">Zugangsdaten</span></a>
+<a id="l8"><span class="ui-text-style-default">Geräteinfos</span></a>
+<a id="l9"><span class="ui-text-style-default">Nutzungsbedingungen</span></a>
+<a id="l10"><span class="ui-text-style-default">Datum und Uhrzeit</span></a>
+</div></td></tr>
+</table></div></div>
+"""
+
+# Trimmed from the Administration assistant's Geräteinfos panel; values are
+# placeholders, not the captured device's real MAC/bus address.
+TKS_DEVICE_INFO_HTML = """\
+<div id="e15"><span>Informationen zur Software</span></div>\
+<div class="aDICEntry"><div class="aDICEContent"><table><tr>\
+<td class="aDICECName"><div class="ui-label"><span>Software-Version:</span></div></td>\
+<td class="aDICECValue"><div class="ui-label"><span>05.04.00.08</span></div></td>\
+</tr></table></div>\
+<div class="aDICEContent"><table><tr>\
+<td class="aDICECName"><div class="ui-label"><span>WebGUI-Version:</span></div></td>\
+<td class="aDICECValue"><div class="ui-label"><span>3.03 - RC104</span></div></td>\
+</tr></table></div></div>\
+<div id="e16"><span>Informationen zur Hardware</span></div>\
+<div class="aDICEntry"><div class="aDICEContent"><table><tr>\
+<td class="aDICECName"><div class="ui-label"><span>MAC-Adresse:</span></div></td>\
+<td class="aDICECValue"><div class="ui-label"><span>AA:BB:CC:DD:EE:FF</span></div></td>\
+</tr></table></div>\
+<div class="aDICEContent"><table><tr>\
+<td class="aDICECName"><div class="ui-label"><span>Busadresse:</span></div></td>\
+<td class="aDICECValue"><div class="ui-label"><span>0xEA81DF</span></div></td>\
+</tr></table></div></div>\
 """
