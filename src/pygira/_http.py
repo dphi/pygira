@@ -27,6 +27,10 @@ from pygira.exceptions import InvalidInputError, TransportError
 class HTTPError(TransportError):
     """Request failed (connection error or, via raise_for_status, 4xx/5xx)."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(message)
+
 
 HTTP_ERROR_STATUS = 400
 SHA256_HEX_LENGTH = 64
@@ -53,7 +57,7 @@ class Response:
     def raise_for_status(self) -> None:
         if self.status_code >= HTTP_ERROR_STATUS:
             msg = f"HTTP {self.status_code}"
-            raise HTTPError(msg)
+            raise HTTPError(msg, status_code=self.status_code)
 
 
 class Client:

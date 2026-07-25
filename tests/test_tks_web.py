@@ -557,6 +557,33 @@ def test_expired_persisted_session_reconnects_once(tmp_path: Path) -> None:
     assert not session_path.exists()
 
 
+@respx.mock
+def test_expired_persisted_session_reconnects_after_http_404(tmp_path: Path) -> None:
+    session_path = tmp_path / "session.json"
+    with patch("pygira.tks_web._default_session_cache_path", return_value=session_path):
+        previous = TksWebClient(HOST, persist_session=True)
+        previous._sid = "expired-sid"
+        previous._session_cookie = "expired-cookie"
+        previous._persist_session()
+
+        state = _mock_state()
+        root = respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
+        json_route = respx.get(f"http://{HOST}:8080/json").mock(
+            side_effect=[
+                Response(404, content=b""),
+                _body_response(TKS_SYSTEM_HTML),
+            ],
+        )
+
+        html = TksWebClient(HOST, persist_session=True).reload()
+
+    assert html == TKS_SYSTEM_HTML
+    assert state.called
+    assert root.called
+    assert len(json_route.calls) == SESSION_BOOTSTRAP_REQUESTS
+    assert not session_path.exists()
+
+
 # ── login ──────────────────────────────────────────────────────────────────
 
 

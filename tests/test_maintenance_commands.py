@@ -18,12 +18,13 @@ from pygira.config_service import (
     TksWebInterfaceActivation,
 )
 from pygira.devices.g1 import PROFILE as G1_PROFILE
-from pygira.exceptions import OperationTimeoutError
+from pygira.exceptions import OperationTimeoutError, TransportError
 from pygira.gds import GdsClient
 from pygira.models import WeatherStation
 
 HOST = "192.0.2.10"
 CREDS = ["--ip", HOST, "--username", "device", "--password", "secret"]
+EXPECTED_ACTIVATION_ATTEMPTS = 2
 
 
 def _login(profile: object = G1_PROFILE) -> tuple[object, str, str, str]:
@@ -191,6 +192,32 @@ def test_tks_info_command() -> None:
     assert "05.04.00.08" in result.output
     activate_web.assert_called_once_with(HOST)
     client.login.assert_called_once_with("admin", "secret")
+
+
+def test_tks_info_reactivates_after_transient_login_transport_failure() -> None:
+    first_client = MagicMock()
+    first_client.login.side_effect = TransportError("remote end closed connection")
+    second_client = MagicMock()
+    second_client.device_info.return_value = {"Software-Version": "05.04.00.08"}
+    login = (HOST, "admin", "secret")
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch(
+            "pygira.commands.maintenance.cs.activate_tks_webinterface",
+        ) as activate_web,
+        patch(
+            "pygira.commands.maintenance.TksWebClient",
+            side_effect=[first_client, second_client],
+        ),
+    ):
+        result = CliRunner().invoke(main, ["tks", "info"])
+
+    assert result.exit_code == 0, result.output
+    assert "05.04.00.08" in result.output
+    assert activate_web.call_count == EXPECTED_ACTIVATION_ATTEMPTS
+    first_client.login.assert_called_once_with("admin", "secret")
+    second_client.login.assert_called_once_with("admin", "secret")
 
 
 def test_tks_info_reports_web_interface_activation_failure() -> None:

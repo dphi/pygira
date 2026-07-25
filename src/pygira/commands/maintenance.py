@@ -34,7 +34,7 @@ from pygira.context import (
 from pygira.core.detect import detect_device_type
 from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
-from pygira.exceptions import UnsupportedCapabilityError
+from pygira.exceptions import TransportError, UnsupportedCapabilityError
 from pygira.gds import GdsClient, run_gds
 from pygira.options import common_options, selection_options
 from pygira.prompting import TypedAddress
@@ -47,6 +47,7 @@ NORMAL_SYSLOG_SEVERITY = 4
 SECONDS_PER_MINUTE = 60
 MAX_CLOCK_SKEW_SECONDS = 120
 MIN_FREE_MEMORY_KIB = 4096
+TKS_WEB_LOGIN_ATTEMPTS = 2
 
 
 def _tks_ip_option(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
@@ -92,11 +93,19 @@ def _require_x1(profile: DeviceProfile, command_name: str) -> None:
 
 def _login_tks_web(host: str, username: str, password: str) -> TksWebClient:
     """Start the on-demand web app and return an authenticated session."""
+    last_error: TransportError | None = None
     with console.status("[bold]Opening TKS-IP web interface…[/bold]"):
-        cs.activate_tks_webinterface(host)
-        client = TksWebClient(host, persist_session=True)
-        client.login(username, password)
-    return client
+        for _ in range(TKS_WEB_LOGIN_ATTEMPTS):
+            cs.activate_tks_webinterface(host)
+            client = TksWebClient(host, persist_session=True)
+            try:
+                client.login(username, password)
+            except TransportError as exc:
+                last_error = exc
+            else:
+                return client
+    assert last_error is not None
+    raise last_error
 
 
 def _check_status(ok: bool, *, warning: bool = False) -> str:

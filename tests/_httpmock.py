@@ -51,7 +51,7 @@ class Response:
     def raise_for_status(self) -> None:
         if self.status_code >= HTTP_ERROR_STATUS:
             msg = f"HTTP {self.status_code}"
-            raise _http.HTTPError(msg)
+            raise _http.HTTPError(msg, status_code=self.status_code)
 
 
 class Request:

@@ -58,6 +58,7 @@ _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
 _SESSION_CLOSED = (0, 18)
 _INVALID_SITE_ID = (0, 19)
 _POLL_INTERVAL_SECONDS = 0.5
+_STALE_SESSION_STATUS = 404
 _PRIVATE_FILE_MODE = 0o600
 _PRIVATE_DIR_MODE = 0o700
 _NETWORK_FIELD_LABELS = {
@@ -711,7 +712,17 @@ class TksWebClient:
             "/json",
             params={"sid": self._sid, "rid": "0", "data": json.dumps(data)},
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            if (
+                exc.status_code != _STALE_SESSION_STATUS
+                or _reconnected
+                or not self._restored_session
+            ):
+                raise
+            self._invalidate_session()
+            return self._send(data, _reconnected=True)
         commands = cast("list[Any]", resp.json())
         try:
             session_closed = _scan_session_signal(commands)
@@ -776,7 +787,17 @@ class TksWebClient:
         if self._sid is None:
             self._connect()
         resp = self._client.get("/json", params={"sid": self._sid or "", "rid": "0"})
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            if (
+                exc.status_code != _STALE_SESSION_STATUS
+                or _reconnected
+                or not self._restored_session
+            ):
+                raise
+            self._invalidate_session()
+            return self.poll(_reconnected=True)
         payload = resp.json()
         if not isinstance(payload, list):
             msg = "non-list response from TKS-IP command poll"

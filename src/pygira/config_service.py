@@ -528,7 +528,10 @@ def _poll_tks_state(
     try:
         resp = client.get("/state", params={"callback": "setState"})
         if resp.status_code >= HTTP_ERROR_STATUS:
-            return last_state, httpx.HTTPError(f"HTTP {resp.status_code}")
+            return last_state, httpx.HTTPError(
+                f"HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
         state = _parse_tks_state(resp.content)
         if state == _TKS_ERROR_STATE:
             msg = "TKS-IP web interface reported error state 2"

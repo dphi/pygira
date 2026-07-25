@@ -11,6 +11,8 @@ from pygira import _http
 from pygira.config_service import TlsConfig, _make_client
 from pygira.exceptions import InvalidInputError, TransportError
 
+HTTP_NOT_FOUND = 404
+
 
 def _response_with_certificate(certificate: bytes) -> object:
     sock = MagicMock()
@@ -37,6 +39,15 @@ def test_http_client_rejects_mismatched_certificate_pin() -> None:
 def test_http_client_rejects_invalid_certificate_pin() -> None:
     with pytest.raises(InvalidInputError, match="SHA-256"):
         _http.Client(certificate_fingerprint="not-a-fingerprint")
+
+
+def test_http_error_preserves_response_status() -> None:
+    response = _http.Response(HTTP_NOT_FOUND, b"")
+
+    with pytest.raises(_http.HTTPError) as error:
+        response.raise_for_status()
+
+    assert error.value.status_code == HTTP_NOT_FOUND
 
 
 def test_configuration_service_propagates_custom_tls_options() -> None:
