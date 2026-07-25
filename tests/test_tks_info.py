@@ -11,9 +11,7 @@ from tests import _httpmock as respx
 from tests._httpmock import Request, Response
 
 HOST = "192.168.1.100"
-ROOT_HTML = (
-    '<script>decodeCommand(0, 6, "287aca0a-9de4-4cc1-9028-8471048eb545", 0);</script>'
-)
+ROOT_HTML = '<script>decodeCommand(0, 6, "287aca0a-9de4-4cc1-9028-8471048eb545", 0);</script>'
 OVERVIEW_HTML = '<a id="l8"><span>Geräteinfos</span></a>'
 DEVICE_INFO_HTML = """\
 <td class="aDICECName"><span>Software-Version:</span></td>

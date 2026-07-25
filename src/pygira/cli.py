@@ -12,7 +12,14 @@ from pygira.exceptions import PygiraError
 def _format_validation_error(exc: ValidationError) -> str:
     """Render validation failures without echoing credential-bearing input values."""
     details = []
-    for error in exc.errors(include_input=False, include_url=False):
+    try:
+        errors = exc.errors(include_input=False, include_url=False)
+    except TypeError:
+        # Pydantic 2.0 does not expose these output-filtering arguments. We
+        # still render only the location and message fields below, never the
+        # credential-bearing input retained in the remaining error mapping.
+        errors = exc.errors()
+    for error in errors:
         location = ".".join(str(part) for part in error["loc"]) or "configuration"
         details.append(f"{location}: {error['msg']}")
     return "Validation failed:\n" + "\n".join(details)

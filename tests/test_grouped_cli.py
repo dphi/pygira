@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from pygira.cli import main
 from pygira.commands.maintenance import _LogTarget
+from pygira.context import TKS_AES_KEY_ENV
 from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
 
@@ -89,7 +90,7 @@ password = "web-secret"
     download = MagicMock(side_effect=[b"first line\n", KeyboardInterrupt])
 
     with (
-        patch.dict(os.environ, {}, clear=True),
+        patch.dict(os.environ, {TKS_AES_KEY_ENV: ""}),
         patch("pygira.context.dotenv_values", return_value={}),
         patch(
             "pygira.commands.maintenance.detect_device_type",
@@ -137,7 +138,7 @@ aes_key = "other-key"
     download = MagicMock(side_effect=[b"first line\n", KeyboardInterrupt])
 
     with (
-        patch.dict(os.environ, {}, clear=True),
+        patch.dict(os.environ, {TKS_AES_KEY_ENV: ""}),
         patch("pygira.context.dotenv_values", return_value={}),
         patch(
             "pygira.commands.maintenance.detect_device_type",

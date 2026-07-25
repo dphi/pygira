@@ -126,11 +126,7 @@ def _prompt_configured_device(
         if location is None:
             msg = f"Location {configured_location!r} not found in {config_path}"
             raise click.UsageError(msg)
-        locations = [
-            (key, candidate)
-            for key, candidate in locations
-            if candidate is location
-        ]
+        locations = [(key, candidate) for key, candidate in locations if candidate is location]
         if not locations:
             expected = requested.value if isinstance(requested, DeviceType) else "supported"
             msg = f"Location {configured_location!r} has no configured {expected} device"
@@ -291,8 +287,7 @@ def _configured_tks_device(host: str) -> DeviceConfig | None:
     matches = [
         device
         for device in devices
-        if _device_type(device.type) == DeviceType.TKS_IP
-        and device.address == host
+        if _device_type(device.type) == DeviceType.TKS_IP and device.address == host
     ]
     return matches[0] if len(matches) == 1 else None
 

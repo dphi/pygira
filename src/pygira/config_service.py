@@ -288,11 +288,7 @@ def _runtime_diagnostics(
     )
     cutoff = (latest_signal or reference) - failure_window
     recent_failures = tuple(
-        dict.fromkeys(
-            label
-            for timestamp, label in signals.failures
-            if timestamp >= cutoff
-        ),
+        dict.fromkeys(label for timestamp, label in signals.failures if timestamp >= cutoff),
     )
     return TksRuntimeDiagnostics(
         observed_at=signals.observed_at,

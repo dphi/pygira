@@ -199,8 +199,7 @@ def _add_tks_runtime_rows(
     reference: datetime,
 ) -> None:
     memory_ok = (
-        diagnostics.free_memory_kib is None
-        or diagnostics.free_memory_kib >= MIN_FREE_MEMORY_KIB
+        diagnostics.free_memory_kib is None or diagnostics.free_memory_kib >= MIN_FREE_MEMORY_KIB
     )
     table.add_row(
         "Runtime",
@@ -482,11 +481,7 @@ def _register_tks_sip_info(main: click.Group) -> None:
                 str(item["name"]),
                 "yes" if item["selected"] else "",
                 str(item["username"] or ""),
-                (
-                    ""
-                    if password_configured is None
-                    else ("yes" if password_configured else "no")
-                ),
+                ("" if password_configured is None else ("yes" if password_configured else "no")),
             )
         console.print(client_table)
 

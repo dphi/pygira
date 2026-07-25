@@ -31,6 +31,8 @@ ip = "192.0.2.12"
 username = "admin"
 password = "tks-secret"
 """
+
+
 def test_load_config_normalizes_legacy_apartments(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(LEGACY_CONFIG)

@@ -203,7 +203,7 @@ def _find_button_id(html: str, label: str) -> str:
     controls = cast(
         "list[HtmlElement]",
         tree.xpath(
-            '//div[@id][button[normalize-space(.)=$label]]',
+            "//div[@id][button[normalize-space(.)=$label]]",
             label=label,
         ),
     )
@@ -221,7 +221,7 @@ def _find_assistant_action_id(html: str, label: str) -> str:
     controls = cast(
         "list[HtmlElement]",
         tree.xpath(
-            '//tr[td[1][normalize-space(.)=$label]]'
+            "//tr[td[1][normalize-space(.)=$label]]"
             '//div[@id][button[normalize-space(.)="Gira Assistent starten"]]',
             label=label,
         ),
@@ -258,14 +258,13 @@ def _find_tab_selection(html: str, tabbar_class: str, label: str) -> tuple[str, 
     tabbars = cast(
         "list[HtmlElement]",
         tree.xpath(
-            '//*[contains(concat(" ", normalize-space(@class), " "), $class_name)]'
-            "//div[@id][ul]",
+            '//*[contains(concat(" ", normalize-space(@class), " "), $class_name)]//div[@id][ul]',
             class_name=f" {tabbar_class} ",
         ),
     )
     tabs = cast(
         "list[HtmlElement]",
-        tree.xpath('//li[@id][normalize-space(.)=$label]', label=label),
+        tree.xpath("//li[@id][normalize-space(.)=$label]", label=label),
     )
     if not tabbars or not tabs:
         msg = f"TKS-IP tab labelled {label!r} not found"
@@ -580,7 +579,7 @@ def _parse_sip_incoming_calls(commands: list[Any]) -> list[dict[str, object]]:
             call_rows = cast(
                 "list[HtmlElement]",
                 tree.xpath(
-                    '//tr[descendant::*[contains('
+                    "//tr[descendant::*[contains("
                     'concat(" ", normalize-space(@class), " "), " ssipPICTableEntry ")]]',
                 ),
             )

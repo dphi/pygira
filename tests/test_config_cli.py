@@ -9,13 +9,26 @@ import pytest
 from click.testing import CliRunner
 from pydantic import ValidationError
 
-from pygira.cli import main
+from pygira.cli import _format_validation_error, main
 from pygira.context import TKS_AES_KEY_ENV, resolve_login, resolve_tks_aes_key
 from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
 from pygira.models import DeviceConfig, load_config
 
 PRIVATE_FILE_MODE = 0o600
+
+
+def test_validation_error_formatting_supports_pydantic_2_0() -> None:
+    error = MagicMock()
+    error.errors.side_effect = [
+        TypeError("unsupported keyword"),
+        [{"loc": ("password",), "msg": "invalid credential", "input": "do-not-print"}],
+    ]
+
+    output = _format_validation_error(error)
+
+    assert output == "Validation failed:\npassword: invalid credential"
+    assert "do-not-print" not in output
 
 
 def test_config_add_direct_device_and_list(tmp_path: Path) -> None:

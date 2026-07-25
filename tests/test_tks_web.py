@@ -100,10 +100,13 @@ def test_find_button_id_finds_overview_control_by_label() -> None:
 
 
 def test_find_assistant_action_id_finds_row_scoped_launch_button() -> None:
-    assert tks_web._find_assistant_action_id(
-        TKS_OVERVIEW_HTML,
-        "IP-Telefone konfigurieren",
-    ) == "c80"
+    assert (
+        tks_web._find_assistant_action_id(
+            TKS_OVERVIEW_HTML,
+            "IP-Telefone konfigurieren",
+        )
+        == "c80"
+    )
 
 
 def test_parse_device_info_pairs_names_with_values() -> None:
@@ -434,6 +437,7 @@ def test_sip_clients_launches_assistant_without_sending_configuration() -> None:
     client = TksWebClient(HOST)
     client._sid = "test-sid"
     client._navigation_html = TKS_OVERVIEW_HTML
+
     def json_side_effect(request: Request) -> Response:
         data = _parse_data(request.url)
         if data == ["click", "c80"]:
