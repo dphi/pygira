@@ -1,13 +1,15 @@
 """Tests for the unified TKS-IP facade."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pygira.config_service import TksDeviceStatus
+from pygira.config_service import TksDeviceStatus, TksRuntimeDiagnostics
 from pygira.devices.tks_ip import TksIp
-from pygira.exceptions import InvalidInputError, TransportError
+from pygira.exceptions import InvalidInputError, TransportError, UnsupportedCapabilityError
+from pygira.models import NetworkConfig
 
 HOST = "192.0.2.30"
 TIMEOUT = 12.0
@@ -86,6 +88,17 @@ def test_tks_web_login_retries_one_transient_transport_failure() -> None:
     assert activate.call_count == EXPECTED_LOGIN_ATTEMPTS
 
 
+def test_tks_web_login_reports_failure_after_retry() -> None:
+    client = MagicMock()
+    client.login.side_effect = TransportError("connection closed")
+    with (
+        patch("pygira.devices.tks_ip.cs.activate_tks_webinterface"),
+        patch("pygira.devices.tks_ip.TksWebClient", return_value=client),
+        pytest.raises(TransportError, match="connection closed"),
+    ):
+        TksIp(HOST, password="secret").raw_device_info()
+
+
 def test_tks_status_and_diagnostics_use_passive_service() -> None:
     status = TksDeviceStatus(True, True, 200, None, None, True, True)
     with patch("pygira.devices.tks_ip.cs.get_tks_device_status", return_value=status) as inspect:
@@ -102,9 +115,56 @@ def test_tks_status_and_diagnostics_use_passive_service() -> None:
     )
 
 
+def test_tks_diagnostic_model_includes_runtime_and_log_error() -> None:
+    runtime = TksRuntimeDiagnostics(
+        observed_at=datetime(2026, 7, 25, tzinfo=timezone.utc),
+        free_memory_kib=8192,
+        load_averages=(0.1, 0.2, 0.3),
+        runnable_tasks=2,
+        total_tasks=40,
+        sip_pid=100,
+        sip_memory_kib=2048,
+        sip_memory_limit_kib=6000,
+        sip_responsive=True,
+        sip_observed_at=None,
+        tks_bus_state="5",
+        tks_bus_observed_at=None,
+        recent_failures=(),
+    )
+    healthy = TksDeviceStatus(True, True, 200, None, None, True, True, diagnostics=runtime)
+    failed = TksDeviceStatus(
+        True,
+        True,
+        200,
+        None,
+        None,
+        True,
+        True,
+        diagnostics_error="invalid key",
+    )
+    device = TksIp(HOST)
+
+    with patch.object(device, "status", return_value=healthy):
+        model = device.diagnostic_page_model()
+    with patch.object(device, "status", return_value=failed):
+        error_page = device.diagnostic_page()
+
+    assert model.sections[1].title == "TKS-IP runtime"
+    assert "Free memory KiB: 8192" in model.sections[1].blob
+    assert "invalid key" in error_page["data"]["diagnosticpage"][1]["blob"]
+
+
 def test_tks_logfile_requires_aes_key() -> None:
     with pytest.raises(InvalidInputError, match="AES key"):
         TksIp(HOST).logfile()
+
+
+def test_tks_logfile_delegates_with_configured_key() -> None:
+    with patch("pygira.devices.tks_ip.cs.download_tks_logfile", return_value=b"log") as download:
+        data = TksIp(HOST, timeout=TIMEOUT, aes_key="key").logfile()
+
+    assert data == b"log"
+    download.assert_called_once_with(HOST, timeout=TIMEOUT, aes_key="key")
 
 
 def test_tks_backup_and_firmware_operations_delegate_to_web_client(tmp_path: Path) -> None:
@@ -120,8 +180,50 @@ def test_tks_backup_and_firmware_operations_delegate_to_web_client(tmp_path: Pat
 
         assert device.backup_save() == b"backup"
         device.backup_restore(b"restore", "backup.img")
-        device.firmware_update(firmware)
+        assert device.install_firmware(firmware) == {"started": True}
+        assert device.can_wait_for_upgrade is False
 
     client.backup_save.assert_called_once_with(timeout=TIMEOUT)
     client.backup_restore.assert_called_once_with(b"restore", "backup.img")
     client.firmware_update.assert_called_once_with(b"firmware", "firmware.bin")
+
+
+def test_tks_firmware_status_has_shared_model() -> None:
+    client = _web_client()
+    with (
+        patch("pygira.devices.tks_ip.cs.activate_tks_webinterface"),
+        patch("pygira.devices.tks_ip.TksWebClient", return_value=client),
+    ):
+        device = TksIp(HOST, password="secret")
+        raw = device.firmware_status()
+        model = device.firmware_status_model()
+
+    assert raw["data"]["currentVersion"] == "05.04.00.08"
+    assert model.current_version == "05.04.00.08"
+    assert model.state == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "kwargs"),
+    [
+        ("set_ntp", (), {"enabled": True, "server": "pool.ntp.org"}),
+        ("set_ip", (NetworkConfig(),), {}),
+        ("get_logging_severity", (), {}),
+        ("set_logging_severity", (4,), {}),
+        ("check_update", (), {}),
+        ("trigger_online_update", (), {}),
+        ("wait_for_completion", (), {}),
+        ("commissioning_test", (), {}),
+        ("enable_ssh", (), {}),
+        ("disable_ssh", (), {}),
+        ("reboot", (), {}),
+        ("factory_reset", (), {}),
+    ],
+)
+def test_tks_unconfirmed_operations_are_explicitly_unsupported(
+    method: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(UnsupportedCapabilityError, match="confirmed TKS-IP API"):
+        getattr(TksIp(HOST), method)(*args, **kwargs)
