@@ -26,6 +26,18 @@ def test_command_help_states_supported_devices() -> None:
 
     assert result.exit_code == 0, result.output
     assert "Supported devices: G1." in result.output
+    assert "--ip TEXT" in result.output
+    assert "--name TEXT" in result.output
+    assert "--location TEXT" in result.output
+    assert "--config FILE" in result.output
+
+
+def test_tks_command_help_uses_common_ip_spelling() -> None:
+    result = CliRunner().invoke(main, ["tks", "status", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--ip, --tks-ip TEXT" in result.output
+    assert "--name TEXT" in result.output
 
 
 def test_command_support_lists_nested_commands() -> None:

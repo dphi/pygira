@@ -276,8 +276,8 @@ def resolve_tks_ip(tks_ip: str | None) -> str:
     return click.prompt("TKS-IP gateway IP address")
 
 
-def _configured_tks_aes_key(host: str) -> str | None:
-    """Return the configured AES key for one unambiguously matching host."""
+def _configured_tks_device(host: str) -> DeviceConfig | None:
+    """Return one unambiguously configured TKS-IP device matching a host."""
     ctx = click.get_current_context()
     config_path = (ctx.obj or {}).get("config_path", "devices.toml")
     try:
@@ -289,13 +289,18 @@ def _configured_tks_aes_key(host: str) -> str | None:
         *(device for location in cfg.locations.values() for device in location.devices.values()),
     ]
     matches = [
-        device.aes_key
+        device
         for device in devices
         if _device_type(device.type) == DeviceType.TKS_IP
         and device.address == host
-        and device.aes_key
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def _configured_tks_aes_key(host: str) -> str | None:
+    """Return the configured AES key for one unambiguously matching host."""
+    device = _configured_tks_device(host)
+    return device.aes_key if device is not None else None
 
 
 def resolve_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str:
@@ -332,11 +337,17 @@ def resolve_tks_login(
     tks_pass: str | None,
 ) -> tuple[str, str, str]:
     """Resolve TKS-IP gateway host + web-login credentials."""
-    selected = (
-        _selected_or_prompted_tks_device()
-        if not (tks_ip and tks_user and tks_pass)
-        else None
-    )
+    selected: DeviceConfig | TypedAddress | None
+    if tks_ip and tks_user and tks_pass:
+        selected = None
+    elif tks_ip:
+        obj = click.get_current_context().find_root().obj or {}
+        if obj.get("device_name") or obj.get("location"):
+            selected = _selected_or_prompted_tks_device()
+        else:
+            selected = _configured_tks_device(tks_ip)
+    else:
+        selected = _selected_or_prompted_tks_device()
     if isinstance(selected, TypedAddress):
         tks_ip = tks_ip or selected.value
     elif selected is not None:

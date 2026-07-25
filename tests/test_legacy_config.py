@@ -75,7 +75,7 @@ def test_multiple_tks_gateways_can_be_selected_by_location(tmp_path: Path) -> No
 
     result = CliRunner().invoke(
         resolve,
-        input="North (18)\ntks_ip (tks-ip, 192.0.2.22)\n",
+        input="North (18)\n",
         obj={
             "config_path": str(path),
             "location": None,
@@ -86,7 +86,7 @@ def test_multiple_tks_gateways_can_be_selected_by_location(tmp_path: Path) -> No
 
     assert result.exit_code == 0, result.output
     assert "North (18)" in result.output
-    assert "tks_ip (tks-ip, 192.0.2.22)" in result.output
+    assert "Device:" not in result.output
     assert "192.0.2.22|admin|tks-secret" in result.output
 
 

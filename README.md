@@ -98,6 +98,15 @@ from `devices.toml`, see below). Commands are grouped by the resource they
 operate on. Run `pygira <group> <command> --help` for the full option list, or
 `pygira command-support` for the device compatibility matrix.
 
+Target options can be written directly after an operational command:
+
+```bash
+pygira device info --ip 192.168.1.240
+pygira device info --name living_room_g1
+pygira device info --location home --name controller
+pygira device info --config other-devices.toml --name controller
+```
+
 **Inspect a device**
 
 ```bash
@@ -204,8 +213,8 @@ commit them. See [SECURITY.md](SECURITY.md) for the local-network threat model.
 Use named devices directly:
 
 ```bash
-pygira --name living_room_g1 device info
-pygira --location home --name controller device info
+pygira device info --name living_room_g1
+pygira device info --location home --name controller
 ```
 
 Locations are optional grouping only; devices can live directly under `[devices.<name>]`.

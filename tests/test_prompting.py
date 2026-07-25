@@ -38,6 +38,14 @@ def test_search_select_accepts_exact_label_when_redirected() -> None:
     assert result.output.endswith("office\n")
 
 
+def test_search_select_automatically_uses_only_choice() -> None:
+    with patch("pygira.prompting.terminal_prompt") as prompt:
+        selected = search_select("Device", [("Panel", "panel")])
+
+    assert selected == "panel"
+    prompt.assert_not_called()
+
+
 def test_search_select_or_ip_accepts_ip_in_same_prompt() -> None:
     @click.command()
     def choose() -> None:
@@ -71,4 +79,4 @@ def test_search_select_translates_cancel_to_click_abort() -> None:
         patch("pygira.prompting.terminal_prompt", side_effect=KeyboardInterrupt),
         pytest.raises(click.Abort),
     ):
-        search_select("Location", [("Home", "home")])
+        search_select("Location", [("Home", "home"), ("Office", "office")])

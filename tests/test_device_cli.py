@@ -76,13 +76,55 @@ password = "configured-secret"
         result = CliRunner().invoke(
             main,
             ["--config", str(config_path), "device", "detect"],
-            input="Home (home)\npanel (g1, g1.home)\n",
+            input="Home (home)\n",
         )
 
     assert result.exit_code == 0, result.output
     assert "Home (home)" in result.output
-    assert "panel (g1, g1.home)" in result.output
+    assert "Device:" not in result.output
     detect_device.assert_called_once_with("g1.home", "configured-user", "configured-secret")
+
+
+def test_info_accepts_config_selection_options_after_command(tmp_path: Path) -> None:
+    config_path = tmp_path / "devices.toml"
+    config_path.write_text(
+        """
+[locations.home]
+name = "Home"
+
+[locations.home.devices.panel]
+type = "g1"
+host = "g1.home"
+username = "configured-user"
+password = "configured-secret"
+""".strip(),
+    )
+    client = _device_client()
+    detected = DetectionResult(DeviceType.G1, "/api AppName=Gira G1")
+
+    with (
+        patch("pygira.context.detect_device_type", return_value=detected),
+        patch("pygira.commands._target.create_device", return_value=client) as create,
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                "device",
+                "info",
+                "--config",
+                str(config_path),
+                "--location",
+                "home",
+                "--name",
+                "panel",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    target = create.call_args.args[0]
+    assert target.host == "g1.home"
+    assert target.username == "configured-user"
+    assert target.password == "configured-secret"
 
 
 def test_info_diagnostics_and_ntp_commands() -> None:

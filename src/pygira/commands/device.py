@@ -14,7 +14,7 @@ from pygira.core.detect import detect_device_type
 from pygira.exceptions import DeviceDetectionError
 from pygira.models import NetworkConfig
 from pygira.operations import NetworkPatch, merge_network_config
-from pygira.options import common_options, network_options
+from pygira.options import common_options, network_options, selection_options
 from pygira.prompting import TypedAddress
 
 FILESYSTEM_COLUMN_COUNT = 6
@@ -325,7 +325,12 @@ def _human_size(kb: int) -> str:
 
 def _register_detect(main: click.Group) -> None:
     @main.command("detect")
-    @click.option("--ip", default=None, help="Device IP address")
+    @selection_options
+    @click.option(
+        "--ip",
+        default=None,
+        help="Direct device IP address (skips configuration selection)",
+    )
     @click.option("--username", default=None, help="Device username (default: admin)")
     @click.option("--password", default=None, help="Device password (optional)")
     def detect(ip: str | None, username: str | None, password: str | None) -> None:

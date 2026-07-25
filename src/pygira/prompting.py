@@ -64,6 +64,8 @@ def _select(
     if not options and not allow_ip:
         msg = f"{message} has no available choices"
         raise click.UsageError(msg)
+    if len(options) == 1 and not allow_ip:
+        return options[0][1]
 
     guidance = "Select a match"
     if allow_ip:

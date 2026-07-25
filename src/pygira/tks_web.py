@@ -62,6 +62,48 @@ def _find_widget_id(html: str, css_class: str) -> str:
     return widget_id
 
 
+def _find_link_id(html: str, label: str) -> str:
+    """Find the id of an `<a>` navigation link by its visible label text.
+
+    Link ids are assigned by DOM order and can shift when optional menu rows
+    are present, so resolve them from the current page rather than hardcoding
+    an id.
+    """
+    tree = lxml_html.fromstring(html)
+    links = cast("list[HtmlElement]", tree.xpath(f'//a[@id][normalize-space(.)="{label}"]'))
+    if not links:
+        msg = f"TKS-IP navigation link labelled {label!r} not found"
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-link", msg)
+    link_id = links[0].get("id")
+    assert link_id is not None
+    return link_id
+
+
+def _collect_html_fragments(commands: list[Any]) -> str:
+    """Concatenate HTML fragments carried by command-loop responses."""
+    fragments: list[str] = []
+    for cmd in commands[1:]:
+        if not isinstance(cmd, list):
+            continue
+        fragments.extend(
+            arg[0]
+            for arg in cmd
+            if isinstance(arg, list) and len(arg) == 1 and isinstance(arg[0], str)
+        )
+    return "".join(fragments)
+
+
+def _parse_device_info(html_blob: str) -> dict[str, str]:
+    """Parse Geräteinfos name/value rows from Administration HTML."""
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    names = cast("list[HtmlElement]", tree.xpath('//*[@class="aDICECName"]//span'))
+    values = cast("list[HtmlElement]", tree.xpath('//*[@class="aDICECValue"]//span'))
+    return {
+        (name.text_content() or "").rstrip(":").strip(): (value.text_content() or "").strip()
+        for name, value in zip(names, values, strict=False)
+    }
+
+
 def _multipart_body(filename: str, data: bytes) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     body = (
@@ -162,6 +204,13 @@ class TksWebClient:
         command = "TKS-IP login"
         response = {"id": "timeout", "error": msg}
         raise AuthenticationError(command, response)
+
+    def device_info(self) -> dict[str, str]:
+        """Read the device-info panel from the Administration page."""
+        html = self.reload()
+        link_id = _find_link_id(html, "Geräteinfos")
+        commands = self._send(["link", link_id])
+        return _parse_device_info(_collect_html_fragments(commands))
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""

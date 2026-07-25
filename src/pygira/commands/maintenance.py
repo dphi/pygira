@@ -34,7 +34,7 @@ from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
 from pygira.exceptions import UnsupportedCapabilityError
 from pygira.gds import GdsClient, run_gds
-from pygira.options import common_options
+from pygira.options import common_options, selection_options
 from pygira.prompting import TypedAddress
 from pygira.tks_web import TksWebClient
 
@@ -42,11 +42,17 @@ P = ParamSpec("P")
 R = TypeVar("R")
 ClickCommand = Callable[P, R]
 NORMAL_SYSLOG_SEVERITY = 4
-TKS_LOGIN_OPTIONS = [
-    click.option("--tks-ip", default=None, help="TKS-IP gateway IP address"),
-    click.option("--tks-user", default=None, help="TKS-IP gateway username"),
-    click.option("--tks-pass", default=None, help="TKS-IP gateway password"),
-]
+
+
+def _tks_ip_option(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
+    """Expose the common --ip spelling while retaining --tks-ip compatibility."""
+    return click.option(
+        "--ip",
+        "--tks-ip",
+        "tks_ip",
+        default=None,
+        help="Direct TKS-IP gateway address (skips configuration selection)",
+    )(f)
 
 
 @dataclass(frozen=True)
@@ -58,9 +64,19 @@ class _LogTarget:
 
 
 def _tks_login_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
-    for opt in reversed(TKS_LOGIN_OPTIONS):
-        f = opt(f)
-    return f
+    decorated = click.option(
+        "--tks-pass",
+        default=None,
+        hide_input=True,
+        help="TKS-IP gateway password",
+    )(f)
+    decorated = click.option(
+        "--tks-user",
+        default=None,
+        help="TKS-IP gateway username",
+    )(decorated)
+    decorated = _tks_ip_option(decorated)
+    return selection_options(decorated)
 
 
 def _require_x1(profile: DeviceProfile, command_name: str) -> None:
@@ -76,6 +92,7 @@ def register(main: click.Group) -> None:
     _register_tks_backup_save(main)
     _register_tks_backup_restore(main)
     _register_tks_firmware_update(main)
+    _register_tks_device_info(main)
     _register_weather(main)
     _register_basic_maintenance(main)
     _register_pull_logs(main)
@@ -116,7 +133,8 @@ def _register_set_tks(main: click.Group) -> None:
 
 def _register_tks_web(main: click.Group) -> None:
     @main.command("activate-tks-web")
-    @click.option("--tks-ip", default=None, help="TKS-IP gateway IP address")
+    @selection_options
+    @_tks_ip_option
     @click.option(
         "--timeout",
         default=60.0,
@@ -145,7 +163,8 @@ def _register_tks_web(main: click.Group) -> None:
         )
 
     @main.command("tks-status")
-    @click.option("--tks-ip", default=None, help="TKS-IP gateway IP address")
+    @selection_options
+    @_tks_ip_option
     def tks_status(tks_ip: str | None) -> None:
         """Check TKS-IP gateway status without starting the web app."""
         host = resolve_tks_ip(tks_ip)
@@ -165,17 +184,6 @@ def _register_tks_web(main: click.Group) -> None:
 
 
 def _register_tks_backup_save(main: click.Group) -> None:
-    tks_login_options = [
-        click.option("--tks-ip", default=None, help="TKS-IP gateway IP address"),
-        click.option("--tks-user", default=None, help="TKS-IP gateway username"),
-        click.option("--tks-pass", default=None, help="TKS-IP gateway password"),
-    ]
-
-    def _tks_login_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
-        for opt in reversed(tks_login_options):
-            f = opt(f)
-        return f
-
     @main.command("tks-backup-save")
     @_tks_login_options
     @click.option(
@@ -248,6 +256,18 @@ def _register_tks_firmware_update(main: click.Group) -> None:
         client.login(user, pw)
         client.firmware_update(Path(firmware_file).read_bytes(), Path(firmware_file).name)
         console.print("[green]Firmware update triggered.[/green]")
+
+
+def _register_tks_device_info(main: click.Group) -> None:
+    @main.command("tks-info")
+    @_tks_login_options
+    def tks_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
+        """Show read-only device info from the TKS-IP gateway's Administration page."""
+        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
+        client = TksWebClient(host)
+        client.login(user, pw)
+        for name, value in client.device_info().items():
+            console.print(f"[bold]{name}:[/bold] {value}")
 
 
 def _register_weather(main: click.Group) -> None:

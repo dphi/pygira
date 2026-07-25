@@ -307,7 +307,7 @@ admin_password = "secret"
     assert password == "secret"
 
 
-def test_resolve_login_can_select_location_then_device(tmp_path: Path) -> None:
+def test_resolve_login_preselects_only_device_of_requested_type(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(
         """
@@ -345,7 +345,7 @@ password = "office-secret"
     ):
         result = CliRunner().invoke(
             resolve,
-            input="Office (office)\npanel (g1, g1.office)\n",
+            input="Office (office)\n",
             obj={
                 "config_path": str(path),
                 "device_name": None,
@@ -357,7 +357,7 @@ password = "office-secret"
     assert result.exit_code == 0, result.output
     assert "Office (office)" in result.output
     assert "controller" not in result.output
-    assert "panel (g1, g1.office)" in result.output
+    assert "Device:" not in result.output
     assert "g1|g1.office|device|office-secret" in result.output
 
 

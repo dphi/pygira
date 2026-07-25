@@ -111,6 +111,64 @@ def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
     client.firmware_update.assert_called_once_with(b"firmware", "firmware.bin")
 
 
+def test_tks_info_command() -> None:
+    client = MagicMock()
+    client.device_info.return_value = {"Software-Version": "05.04.00.08"}
+    login = (HOST, "admin", "secret")
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+    ):
+        result = CliRunner().invoke(main, ["tks", "info"])
+
+    assert result.exit_code == 0, result.output
+    assert "Software-Version" in result.output
+    assert "05.04.00.08" in result.output
+
+
+def test_tks_backup_accepts_direct_ip_and_command_local_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "devices.toml"
+    config_path.write_text(
+        f"""
+[devices.front]
+type = "tks-ip"
+host = "{HOST}"
+username = "configured-admin"
+password = "configured-secret"
+
+[devices.rear]
+type = "tks-ip"
+host = "192.0.2.11"
+username = "other-admin"
+password = "other-secret"
+""".strip(),
+    )
+    client = MagicMock()
+    client.backup_save.return_value = b"backup"
+    output = tmp_path / "backup.img"
+
+    with patch("pygira.commands.maintenance.TksWebClient", return_value=client):
+        result = CliRunner().invoke(
+            main,
+            [
+                "tks",
+                "backup",
+                "save",
+                "--config",
+                str(config_path),
+                "--ip",
+                HOST,
+                "--output",
+                str(output),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    client.login.assert_called_once_with("configured-admin", "configured-secret")
+    assert output.read_bytes() == b"backup"
+
+
 def test_set_weather_and_g1_factory_reset() -> None:
     station = WeatherStation(station_id="station", label="Test")
     with (
