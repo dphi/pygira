@@ -5,6 +5,18 @@ All notable changes to pygira are documented here. The project follows
 
 ## Unreleased
 
+### Added
+
+- Add a public `TksIp` device facade with normalized device, diagnostics, firmware,
+  network, NTP, status, log, SIP, backup, and local firmware operations.
+
+### Changed
+
+- Route common device, network, NTP, log, firmware, restart, and factory-reset
+  commands through the same facade boundary for G1, X1, and TKS-IP.
+- Expose TKS-IP support in common command help while keeping unconfirmed writes
+  explicitly unsupported.
+
 ## 0.1.0 - 2026-07-25
 
 ### Added

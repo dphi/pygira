@@ -7,8 +7,8 @@ implementations:
 ```text
 Click command
     -> target resolution
-    -> G1 or X1 facade
-    -> HTTP, configuration-service, or GDS transport
+    -> G1, X1, or TksIp facade
+    -> HTTP, configuration-service, GDS, or TKS web transport
     -> device
 ```
 
@@ -21,16 +21,18 @@ Click command
 - Commands resolve normal device targets through
   `pygira.commands._target.resolve_device`.
 - Commands do not construct `ApiClient` or other transport clients directly.
-- `G1` and `X1` select device-specific protocol behavior and expose consistent
+- `G1`, `X1`, and `TksIp` select device-specific protocol behavior and expose consistent
   operations where the devices share a capability.
 - Transport modules own wire formats, authentication, retries, timeouts, and
   protocol error translation.
 - Stable device responses are normalized into models. Raw responses remain
   available through explicitly low-level APIs for protocol research.
 
-TKS-IP is a separate physical device and does not currently have a unified
-facade. Its bootstrap daemon and on-demand web application remain separate
-transports until their supported capability surface is stable.
+`TksIp` combines the gateway's always-on bootstrap service and its on-demand,
+authenticated web assistant behind one public API. Read operations use the
+same method names and normalized models as G1/X1 where the concepts overlap.
+Unconfirmed TKS-IP writes raise `UnsupportedCapabilityError`; the facade must
+not imply support merely to make the three classes structurally identical.
 
 ## Adding behavior
 

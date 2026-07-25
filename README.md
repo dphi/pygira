@@ -4,7 +4,7 @@
 [![CI](https://github.com/dphi/pygira/actions/workflows/ci.yml/badge.svg)](https://github.com/dphi/pygira/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-`pygira` is a Python library and provisioning CLI for Gira G1 and X1 devices.
+`pygira` is a Python library and provisioning CLI for Gira G1, X1, and TKS-IP devices.
 
 ## Installation
 
@@ -20,7 +20,7 @@ The device facades are the recommended public API. They select the correct
 protocol paths while exposing a consistent interface:
 
 ```python
-from pygira import G1, NetworkConfig, X1
+from pygira import G1, NetworkConfig, TksIp, X1
 
 g1 = G1("192.168.1.240", password="secret")
 print(g1.device_info_model())
@@ -36,9 +36,18 @@ x1.set_ip(
         default_gateway="192.168.1.1",
     ),
 )
+
+tks = TksIp(
+    "192.168.1.10",
+    username="admin",
+    password="secret",
+    aes_key="0123456789abcdefghijklmn",
+)
+print(tks.device_info_model())
+print(tks.status())
 ```
 
-`G1`, `X1`, `GdsClient`, `TlsConfig`, normalized device/firmware/diagnostic/TKS models,
+`G1`, `X1`, `TksIp`, `GdsClient`, `TlsConfig`, normalized device/firmware/diagnostic/TKS models,
 `DeviceType`, and the pygira exception hierarchy are exported from the package root.
 `ApiClient` remains available for low-level iscwebservice access. Invalid input,
 authentication, transport, protocol, timeout, capability, and device-detection failures
@@ -81,6 +90,7 @@ pin deliberately when device firmware or certificate replacement changes the lea
 
 - `g1`
 - `x1`
+- `tks-ip`
 
 See the [firmware compatibility matrix](docs/firmware-compatibility.md) for confirmed versions
 and the stability level of individual operations.
@@ -126,6 +136,9 @@ pygira ntp set --ip 192.168.1.240 --server pool.ntp.org --interval 10
 pygira ntp get --ip 192.168.1.240
 ```
 
+Network and NTP inspection works on all three device families. Configuration
+writes are limited to G1 and X1 because no safe TKS-IP write API has been confirmed.
+
 **Logs**
 
 ```bash
@@ -141,6 +154,7 @@ pygira logging set --ip 192.168.1.240 --mode normal
 pygira firmware check --ip 192.168.1.240                  # is an update available?
 pygira firmware upgrade --ip 192.168.1.240 --online       # update from Gira servers
 pygira firmware upgrade --ip 192.168.1.240 --file firmware.zip
+pygira --device tks-ip firmware upgrade --ip 192.168.1.10 --file firmware.bin
 pygira device restart --ip 192.168.1.240
 pygira device factory-reset --ip 192.168.1.240 --confirm  # erases all configuration
 pygira device commissioning-test --ip 192.168.1.240
@@ -257,26 +271,31 @@ Optional read-only hardware smoke tests are documented in the contributing guide
 an explicit enable flag and environment-only credentials; the normal test suite never connects
 to hardware.
 
-TKS-IP support intentionally excludes camera, debug-RPC, SSH, SIP, and unauthenticated
-network-configuration surfaces from the general management API.
+TKS-IP support intentionally excludes camera access, debug RPC, SSH login/control,
+SIP configuration writes, and unauthenticated network-configuration writes from
+the general management API. Read-only SIP inspection is available.
 
 ## Architecture
 
-### Two protocols, not one
+### Device facades over several protocols
 
-Every command resolves a `DeviceProfile` (via `context.resolve_profile`) that determines which transport to use:
+Operational commands resolve a target and construct a `G1`, `X1`, or `TksIp`
+facade. The facade selects the transport required by that operation:
 
 - **G1** → `api_prefix="/api"`, port 80 (iscwebservice JSON)
 - **X1** → `api_prefix="/webservice"`, port 80 (same JSON protocol, different path)
+- **TKS-IP** → always-on bootstrap/status service on port 80 and an authenticated,
+  on-demand web assistant on port 8080
 
-On top of those, two further protocols exist:
+The underlying protocols are:
 
 | Protocol | Port | File | Used for |
 | -------- | ---- | ---- | -------- |
-| iscwebservice | 80 HTTP | `api.py` | All standard commands (firmware, logs, NTP, IP, reboot) |
+| iscwebservice | 80 HTTP | `api.py` | G1/X1 firmware, NTP, IP, diagnostics, and lifecycle operations |
 | GDS WebSocket | 4432 WSS | `gds.py` | G1 only: weather + TKS-IP config, factory reset |
 | configurationservice | 4433 HTTPS | `config_service.py` | X1 log download, X1 syslog severity; G1 detection fallback only |
 | GDS-REST-API | 443 HTTPS `/api` | — | X1 only: Gira IoT/Home App KNX control (not used for provisioning) |
+| TKS-IP bootstrap | 80 HTTP | `config_service.py` | Activation, detection, passive status, encrypted logs |
 | TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: read-only device/date/network/SIP info, backup/restore, firmware update |
 
 **TKS-IP gateway web app** (separate physical device, not G1/X1): the on-demand
@@ -451,7 +470,7 @@ ID. Camera endpoints (`/cam`, `/cam.jpg`, `/camera/cam.jpg`) are deliberately no
 
 ## Key constraints
 
-- `--device g1|x1` is enforced against auto-detection; a mismatch is a hard error, not a warning.
+- `--device g1|x1|tks-ip` is enforced against auto-detection; a mismatch is a hard error, not a warning.
 - G1-only features (weather, TKS-IP) are gated by `DeviceCapabilities.weather` / `.tks` flags on the profile; use `require_capability()` before calling GDS.
 - `config_service.py` functions `push_device_xml`/`set_ip_config` (XML-based IP config) are superseded by `ApiClient.set_ip_config` (JSON) — the XML path is not called from any current command.
 

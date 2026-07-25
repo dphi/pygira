@@ -1,12 +1,12 @@
 [project]
 name = "pygira"
 dynamic = ["version"]
-description = "Python library and provisioning CLI for Gira G1 and X1 devices"
+description = "Python library and provisioning CLI for Gira G1, X1, and TKS-IP devices"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Philipp Dreimann", email = "philipp@dreimann.net" }]
-keywords = ["gira", "knx", "g1", "x1", "provisioning", "home-automation"]
+keywords = ["gira", "knx", "g1", "x1", "tks-ip", "provisioning", "home-automation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
