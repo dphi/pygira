@@ -3,7 +3,13 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from pygira.api import ApiClient
-from pygira.config_service import TlsConfig
+from pygira.config_service import (
+    TksDeviceStatus,
+    TksRuntimeDiagnostics,
+    TlsConfig,
+    get_tks_device_status,
+    parse_tks_runtime_diagnostics,
+)
 from pygira.core.types import DeviceType
 from pygira.devices.g1 import G1
 from pygira.devices.x1 import X1
@@ -54,8 +60,12 @@ __all__ = [
     "TransportError",
     "TlsConfig",
     "TksConnectionStatus",
+    "TksDeviceStatus",
+    "TksRuntimeDiagnostics",
     "UnsupportedCapabilityError",
     "WeatherStation",
     "X1",
     "__version__",
+    "get_tks_device_status",
+    "parse_tks_runtime_diagnostics",
 ]

@@ -8,7 +8,7 @@ import zipfile
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import ParamSpec, TypeVar, cast
 
@@ -24,6 +24,7 @@ from pygira.context import (
     _prompt_configured_device,
     _selected_device,
     console,
+    find_tks_aes_key,
     require_capability,
     resolve_login,
     resolve_tks_aes_key,
@@ -43,6 +44,9 @@ P = ParamSpec("P")
 R = TypeVar("R")
 ClickCommand = Callable[P, R]
 NORMAL_SYSLOG_SEVERITY = 4
+SECONDS_PER_MINUTE = 60
+MAX_CLOCK_SKEW_SECONDS = 120
+MIN_FREE_MEMORY_KIB = 4096
 
 
 def _tks_ip_option(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
@@ -93,6 +97,168 @@ def _login_tks_web(host: str, username: str, password: str) -> TksWebClient:
         client = TksWebClient(host, persist_session=True)
         client.login(username, password)
     return client
+
+
+def _check_status(ok: bool, *, warning: bool = False) -> str:
+    if ok:
+        return "[green]OK[/green]"
+    return "[yellow]Warning[/yellow]" if warning else "[red]Failed[/red]"
+
+
+def _format_age(timestamp: datetime | None, reference: datetime) -> str:
+    if timestamp is None:
+        return "unknown age"
+    seconds = max(0, int((reference - timestamp).total_seconds()))
+    if seconds < SECONDS_PER_MINUTE:
+        return f"{seconds}s ago"
+    return f"{seconds // SECONDS_PER_MINUTE}m ago"
+
+
+def _add_tks_gateway_rows(table: Table, host: str, status: cs.TksDeviceStatus) -> None:
+    identity_ok = status.bootstrap_reachable and status.identified_as_tks_ip
+    if not status.bootstrap_reachable:
+        bootstrap_detail = f"port 80 is unreachable at {host}"
+    elif status.identified_as_tks_ip:
+        bootstrap_detail = f"TKS-IP bootstrap API (HTTP {status.http_status})"
+    else:
+        bootstrap_detail = f"unexpected page (HTTP {status.http_status})"
+    table.add_row("Gateway", _check_status(identity_ok), bootstrap_detail)
+
+    if status.device_time is not None and status.clock_skew_seconds is not None:
+        skew = abs(status.clock_skew_seconds)
+        clock_ok = skew < MAX_CLOCK_SKEW_SECONDS
+        table.add_row(
+            "Clock",
+            _check_status(clock_ok, warning=True),
+            f"{status.device_time.isoformat()} ({skew:.1f}s skew)",
+        )
+    else:
+        table.add_row("Clock", "[dim]Unknown[/dim]", "no HTTP Date header")
+
+
+def _add_tks_listener_rows(table: Table, status: cs.TksDeviceStatus) -> None:
+    table.add_row(
+        "SDA listener",
+        _check_status(status.sda_listener_reachable, warning=True),
+        "TCP 50500 accepts connections; cloud connection is not verified"
+        if status.sda_listener_reachable
+        else "TCP 50500 is not accepting connections",
+    )
+    table.add_row(
+        "SSH listener",
+        _check_status(status.ssh_reachable, warning=True),
+        "TCP 222 accepts connections"
+        if status.ssh_reachable
+        else "TCP 222 is not accepting connections",
+    )
+
+
+def _resource_detail(
+    diagnostics: cs.TksRuntimeDiagnostics,
+    reference: datetime,
+) -> str:
+    parts = []
+    if diagnostics.free_memory_kib is not None:
+        parts.append(f"{diagnostics.free_memory_kib / 1024:.1f} MiB free")
+    if diagnostics.load_averages is not None:
+        parts.append(
+            "load " + "/".join(f"{value:.2f}" for value in diagnostics.load_averages),
+        )
+    if diagnostics.runnable_tasks is not None and diagnostics.total_tasks is not None:
+        parts.append(f"tasks {diagnostics.runnable_tasks}/{diagnostics.total_tasks}")
+    parts.append(_format_age(diagnostics.observed_at, reference))
+    return "; ".join(parts)
+
+
+def _sip_detail(diagnostics: cs.TksRuntimeDiagnostics, reference: datetime) -> str:
+    parts = [
+        "tuerko ↔ sipd keepalive succeeded"
+        if diagnostics.sip_responsive
+        else "tuerko ↔ sipd keepalive failed",
+        _format_age(diagnostics.sip_observed_at, reference),
+    ]
+    if diagnostics.sip_pid is not None:
+        parts.append(f"PID {diagnostics.sip_pid}")
+    if diagnostics.sip_memory_kib is not None:
+        parts.append(f"{diagnostics.sip_memory_kib / 1024:.1f} MiB")
+    return "; ".join(parts)
+
+
+def _add_tks_runtime_rows(
+    table: Table,
+    diagnostics: cs.TksRuntimeDiagnostics,
+    reference: datetime,
+) -> None:
+    memory_ok = (
+        diagnostics.free_memory_kib is None
+        or diagnostics.free_memory_kib >= MIN_FREE_MEMORY_KIB
+    )
+    table.add_row(
+        "Runtime",
+        _check_status(memory_ok, warning=True),
+        _resource_detail(diagnostics, reference),
+    )
+
+    if diagnostics.sip_responsive is None:
+        table.add_row("SIP daemon", "[dim]Unknown[/dim]", "no SIP keepalive found")
+    else:
+        table.add_row(
+            "SIP daemon",
+            _check_status(diagnostics.sip_responsive, warning=True),
+            _sip_detail(diagnostics, reference),
+        )
+
+    if diagnostics.tks_bus_state is None:
+        table.add_row("TKS bus", "[dim]Unknown[/dim]", "no bus state found")
+    else:
+        table.add_row(
+            "TKS bus",
+            "[green]Observed[/green]",
+            f"raw state 0x{diagnostics.tks_bus_state}; "
+            f"{_format_age(diagnostics.tks_bus_observed_at, reference)}",
+        )
+
+    failures_ok = not diagnostics.recent_failures
+    table.add_row(
+        "Recent failures",
+        _check_status(failures_ok, warning=True),
+        "none in the latest 15-minute log window"
+        if failures_ok
+        else ", ".join(diagnostics.recent_failures),
+    )
+
+
+def _tks_status_summary(host: str, status: cs.TksDeviceStatus) -> str:
+    diagnostics = status.diagnostics
+    if not status.bootstrap_reachable:
+        return f"[red]TKS-IP gateway unavailable at {host}[/red]"
+    if not status.identified_as_tks_ip:
+        return f"[yellow]Unexpected HTTP service at {host}[/yellow]"
+    if diagnostics is None:
+        return f"[green]TKS-IP gateway reachable at {host}[/green]"
+    if diagnostics.recent_failures or diagnostics.sip_responsive is False:
+        return f"[yellow]TKS-IP gateway needs attention at {host}[/yellow]"
+    return f"[green]TKS-IP gateway operational at {host}[/green]"
+
+
+def _print_tks_device_status(host: str, status: cs.TksDeviceStatus) -> None:
+    reference = status.device_time or datetime.now(timezone.utc)
+    table = Table(box=None, show_header=False, padding=(0, 1))
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Details")
+    _add_tks_gateway_rows(table, host, status)
+    _add_tks_listener_rows(table, status)
+
+    if status.diagnostics is None:
+        detail = status.diagnostics_error or "configure an AES key for log-backed checks"
+        table.add_row("Runtime", "[dim]Not checked[/dim]", detail)
+    else:
+        _add_tks_runtime_rows(table, status.diagnostics, reference)
+
+    console.print(_tks_status_summary(host, status))
+    console.print(table)
+    console.print("[dim]Port 8080 was not contacted.[/dim]")
 
 
 def register(main: click.Group) -> None:
@@ -178,22 +344,29 @@ def _register_tks_web(main: click.Group) -> None:
     @main.command("tks-status")
     @selection_options
     @_tks_ip_option
-    def tks_status(tks_ip: str | None) -> None:
-        """Check TKS-IP gateway status without starting the web app."""
+    @click.option(
+        "--aes-key",
+        default=None,
+        metavar="KEY",
+        help="AES-192 log key for runtime, SIP, and TKS bus checks",
+    )
+    @click.option(
+        "--timeout",
+        default=30.0,
+        show_default=True,
+        type=float,
+        help="Maximum seconds for the diagnostic log request",
+    )
+    def tks_status(tks_ip: str | None, aes_key: str | None, timeout: float) -> None:
+        """Inspect TKS-IP health without contacting the port-8080 web app."""
         host = resolve_tks_ip(tks_ip)
-        status = cs.get_tks_status(host)
-        if not status.bootstrap_reachable:
-            console.print(f"[red]Gateway unreachable[/red] at {host}")
-        elif status.app_running:
-            console.print(
-                f"[green]Web app running[/green] "
-                f"(state={status.state_code} — {status.state_description})",
+        with console.status("[bold]Inspecting TKS-IP services…[/bold]"):
+            status = cs.get_tks_device_status(
+                host,
+                timeout=timeout,
+                aes_key=find_tks_aes_key(aes_key, host=host),
             )
-        else:
-            console.print(
-                "[yellow]Bootstrap daemon reachable, web app not running[/yellow] "
-                "— run 'activate-tks-web' to start it",
-            )
+        _print_tks_device_status(host, status)
 
 
 def _register_tks_backup_save(main: click.Group) -> None:

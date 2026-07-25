@@ -4,6 +4,7 @@ import asyncio
 import io
 import zipfile
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +12,11 @@ import pytest
 from click.testing import CliRunner
 
 from pygira.cli import main
-from pygira.config_service import TksStatus, TksWebInterfaceActivation
+from pygira.config_service import (
+    TksDeviceStatus,
+    TksRuntimeDiagnostics,
+    TksWebInterfaceActivation,
+)
 from pygira.devices.g1 import PROFILE as G1_PROFILE
 from pygira.exceptions import OperationTimeoutError
 from pygira.gds import GdsClient
@@ -60,20 +65,74 @@ def test_activate_tks_web_command() -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (TksStatus(False, False, None, None), "unreachable"),
-        (TksStatus(True, True, "0", "ready"), "running"),
-        (TksStatus(True, False, None, None), "not running"),
+        (
+            TksDeviceStatus(False, False, None, None, None, False, False),
+            "unavailable",
+        ),
+        (
+            TksDeviceStatus(True, True, 200, None, None, True, True),
+            "reachable",
+        ),
+        (
+            TksDeviceStatus(
+                True,
+                True,
+                200,
+                datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc),
+                0.5,
+                True,
+                True,
+                diagnostics=TksRuntimeDiagnostics(
+                    observed_at=datetime(2026, 7, 25, 10, 19, 59, tzinfo=timezone.utc),
+                    free_memory_kib=24048,
+                    load_averages=(0.02, 0.04, 0.0),
+                    runnable_tasks=5,
+                    total_tasks=72,
+                    sip_pid=1132,
+                    sip_memory_kib=2396,
+                    sip_memory_limit_kib=6000,
+                    sip_responsive=True,
+                    sip_observed_at=datetime(
+                        2026,
+                        7,
+                        25,
+                        10,
+                        19,
+                        58,
+                        tzinfo=timezone.utc,
+                    ),
+                    tks_bus_state="5",
+                    tks_bus_observed_at=datetime(
+                        2026,
+                        7,
+                        25,
+                        10,
+                        19,
+                        58,
+                        tzinfo=timezone.utc,
+                    ),
+                    recent_failures=(),
+                ),
+            ),
+            "operational",
+        ),
     ],
 )
-def test_tks_status_command_branches(status: TksStatus, expected: str) -> None:
+def test_tks_status_command_branches(status: TksDeviceStatus, expected: str) -> None:
     with (
         patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
-        patch("pygira.commands.maintenance.cs.get_tks_status", return_value=status),
+        patch("pygira.commands.maintenance.find_tks_aes_key", return_value=None),
+        patch(
+            "pygira.commands.maintenance.cs.get_tks_device_status",
+            return_value=status,
+        ) as inspect_status,
     ):
         result = CliRunner().invoke(main, ["tks-status", "--tks-ip", HOST])
 
     assert result.exit_code == 0, result.output
     assert expected in result.output
+    assert "Port 8080 was not contacted" in result.output
+    inspect_status.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
 
 
 def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:

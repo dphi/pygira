@@ -6,9 +6,12 @@ Auth: Authorization: basic <base64(user:password)>  (lowercase "basic")
 import base64
 import gzip
 import re
+import socket
 import ssl
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from lxml import etree
@@ -89,6 +92,31 @@ _APP_STATE_DESCRIPTIONS = {
     "4": "suspended (active video call)",
 }
 
+_TKS_ASSET_MARKER = b"com.gira.tkipgw.web.sites"
+_TKS_SSH_PORT = 222
+_TKS_SDA_PORT = 50500
+_SYSLOG_LINE_RE = re.compile(
+    r"^(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+"
+    r"(?P<clock>\d{2}:\d{2}:\d{2})\s+[^:]+:\s*(?P<message>.*)$",
+)
+_MEMORY_RE = re.compile(r"\bMemFree:\s*(\d+)\s+kB\b")
+_LOAD_RE = re.compile(
+    r"^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+"
+    r"(\d+)/(\d+)\s+\d+$",
+)
+_SIP_MEMORY_RE = re.compile(r"\bSIPDPID:\s*(\d+)\s+MEMCURR:\s*(\d+)\s*>\s*(\d+)")
+_SIP_KEEPALIVE_RE = re.compile(
+    r"\bsipdkeepaliveanswer:\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(-?\d+)",
+)
+_TKS_BUS_STATE_RE = re.compile(r"\bB_GREL_STATE:\s*([0-9A-Fa-f]+)")
+_TKS_FAILURE_PATTERNS = {
+    "SIP daemon restarted": re.compile(r"\bSIPD RESTART(?:1|2)?\b"),
+    "SIP operation failed": re.compile(r"\bError from sipd"),
+    "TKS bus acknowledgement failed": re.compile(r"\bGREL .*Failed to receive ACK\b"),
+    "TKS bus address unavailable": re.compile(r"\bgetBackupIpgwBusaddr error\b"),
+    "web process watchdog stopped": re.compile(r"\btoo many watchdog pings missed\b"),
+}
+
 
 def _parse_tks_state(content: bytes) -> str | None:
     text = content.decode("utf-8", "replace")
@@ -104,6 +132,258 @@ class TksStatus:
     app_running: bool
     state_code: str | None
     state_description: str | None
+
+
+@dataclass(frozen=True)
+class TksRuntimeDiagnostics:
+    """Resource and daemon signals recovered from the port-80 diagnostic log."""
+
+    observed_at: datetime | None
+    free_memory_kib: int | None
+    load_averages: tuple[float, float, float] | None
+    runnable_tasks: int | None
+    total_tasks: int | None
+    sip_pid: int | None
+    sip_memory_kib: int | None
+    sip_memory_limit_kib: int | None
+    sip_responsive: bool | None
+    sip_observed_at: datetime | None
+    tks_bus_state: str | None
+    tks_bus_observed_at: datetime | None
+    recent_failures: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TksDeviceStatus:
+    """Passive TKS-IP health snapshot that never starts or logs into the web app."""
+
+    bootstrap_reachable: bool
+    identified_as_tks_ip: bool
+    http_status: int | None
+    device_time: datetime | None
+    clock_skew_seconds: float | None
+    ssh_reachable: bool
+    sda_listener_reachable: bool
+    diagnostics: TksRuntimeDiagnostics | None = None
+    diagnostics_error: str | None = None
+
+
+@dataclass
+class _RuntimeSignals:
+    observed_at: datetime | None = None
+    free_memory_kib: int | None = None
+    load_averages: tuple[float, float, float] | None = None
+    runnable_tasks: int | None = None
+    total_tasks: int | None = None
+    sip_pid: int | None = None
+    sip_memory_kib: int | None = None
+    sip_memory_limit_kib: int | None = None
+    sip_responsive: bool | None = None
+    sip_observed_at: datetime | None = None
+    tks_bus_state: str | None = None
+    tks_bus_observed_at: datetime | None = None
+    failures: list[tuple[datetime, str]] = field(default_factory=list)
+
+
+def _http_date(headers: dict[str, str]) -> datetime | None:
+    value = next(
+        (value for name, value in headers.items() if name.casefold() == "date"),
+        None,
+    )
+    if not value:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _tcp_reachable(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _syslog_time(match: re.Match[str], reference: datetime) -> datetime | None:
+    try:
+        parsed = datetime.strptime(
+            f"{reference.year} {match['month']} {match['day']} {match['clock']}",
+            "%Y %b %d %H:%M:%S",
+        ).replace(tzinfo=reference.tzinfo)
+    except ValueError:
+        return None
+    if parsed - reference > timedelta(days=1):
+        parsed = parsed.replace(year=parsed.year - 1)
+    return parsed
+
+
+def _read_resource_signals(signals: _RuntimeSignals, message: str, timestamp: datetime) -> None:
+    memory_match = _MEMORY_RE.search(message)
+    if memory_match:
+        signals.free_memory_kib = int(memory_match.group(1))
+        signals.observed_at = timestamp
+
+    load_match = _LOAD_RE.match(message)
+    if load_match:
+        first, second, third = (float(load_match.group(index)) for index in range(1, 4))
+        signals.load_averages = (first, second, third)
+        signals.runnable_tasks = int(load_match.group(4))
+        signals.total_tasks = int(load_match.group(5))
+        signals.observed_at = timestamp
+
+
+def _read_sip_signals(signals: _RuntimeSignals, message: str, timestamp: datetime) -> None:
+    memory_match = _SIP_MEMORY_RE.search(message)
+    if memory_match:
+        signals.sip_pid = int(memory_match.group(1))
+        signals.sip_memory_kib = int(memory_match.group(2))
+        signals.sip_memory_limit_kib = int(memory_match.group(3))
+        signals.sip_observed_at = timestamp
+
+    keepalive_match = _SIP_KEEPALIVE_RE.search(message)
+    if keepalive_match:
+        reported_pid = int(keepalive_match.group(1))
+        expected_pid = int(keepalive_match.group(2))
+        result = int(keepalive_match.group(3))
+        signals.sip_pid = reported_pid
+        signals.sip_responsive = reported_pid == expected_pid and result == 0
+        signals.sip_observed_at = timestamp
+
+
+def _read_bus_and_failure_signals(
+    signals: _RuntimeSignals,
+    message: str,
+    timestamp: datetime,
+) -> None:
+    bus_match = _TKS_BUS_STATE_RE.search(message)
+    if bus_match:
+        signals.tks_bus_state = bus_match.group(1).upper()
+        signals.tks_bus_observed_at = timestamp
+    signals.failures.extend(
+        (timestamp, label)
+        for label, pattern in _TKS_FAILURE_PATTERNS.items()
+        if pattern.search(message)
+    )
+
+
+def _runtime_diagnostics(
+    signals: _RuntimeSignals,
+    reference: datetime,
+    failure_window: timedelta,
+) -> TksRuntimeDiagnostics:
+    latest_signal = max(
+        (
+            value
+            for value in (
+                signals.observed_at,
+                signals.sip_observed_at,
+                signals.tks_bus_observed_at,
+            )
+            if value is not None
+        ),
+        default=None,
+    )
+    cutoff = (latest_signal or reference) - failure_window
+    recent_failures = tuple(
+        dict.fromkeys(
+            label
+            for timestamp, label in signals.failures
+            if timestamp >= cutoff
+        ),
+    )
+    return TksRuntimeDiagnostics(
+        observed_at=signals.observed_at,
+        free_memory_kib=signals.free_memory_kib,
+        load_averages=signals.load_averages,
+        runnable_tasks=signals.runnable_tasks,
+        total_tasks=signals.total_tasks,
+        sip_pid=signals.sip_pid,
+        sip_memory_kib=signals.sip_memory_kib,
+        sip_memory_limit_kib=signals.sip_memory_limit_kib,
+        sip_responsive=signals.sip_responsive,
+        sip_observed_at=signals.sip_observed_at,
+        tks_bus_state=signals.tks_bus_state,
+        tks_bus_observed_at=signals.tks_bus_observed_at,
+        recent_failures=recent_failures,
+    )
+
+
+def parse_tks_runtime_diagnostics(
+    content: bytes,
+    *,
+    reference_time: datetime | None = None,
+    failure_window: timedelta = timedelta(minutes=15),
+) -> TksRuntimeDiagnostics:
+    """Extract bounded health signals from a decrypted TKS-IP syslog."""
+    reference = reference_time or datetime.now(timezone.utc)
+    signals = _RuntimeSignals()
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        line_match = _SYSLOG_LINE_RE.match(line)
+        if line_match is None:
+            continue
+        timestamp = _syslog_time(line_match, reference)
+        if timestamp is None:
+            continue
+        message = line_match["message"]
+        _read_resource_signals(signals, message, timestamp)
+        _read_sip_signals(signals, message, timestamp)
+        _read_bus_and_failure_signals(signals, message, timestamp)
+
+    return _runtime_diagnostics(signals, reference, failure_window)
+
+
+def get_tks_device_status(
+    host: str,
+    *,
+    timeout: float = 30.0,
+    aes_key: str | bytes | None = None,
+) -> TksDeviceStatus:
+    """Inspect the always-on TKS-IP services without accessing port 8080."""
+    bootstrap_reachable = False
+    identified_as_tks_ip = False
+    http_status: int | None = None
+    device_time: datetime | None = None
+    clock_skew_seconds: float | None = None
+    try:
+        with httpx.Client(base_url=f"http://{host}", timeout=min(timeout, 5.0)) as client:
+            response = client.get("/")
+        bootstrap_reachable = True
+        http_status = response.status_code
+        identified_as_tks_ip = _TKS_ASSET_MARKER in response.content.lower()
+        device_time = _http_date(response.headers)
+        if device_time is not None:
+            clock_skew_seconds = (device_time - datetime.now(timezone.utc)).total_seconds()
+    except httpx.HTTPError:
+        pass
+
+    diagnostics = None
+    diagnostics_error = None
+    if aes_key is not None and bootstrap_reachable:
+        try:
+            log_content = download_tks_logfile(host, timeout=timeout, aes_key=aes_key)
+            diagnostics = parse_tks_runtime_diagnostics(
+                log_content,
+                reference_time=device_time,
+            )
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            diagnostics_error = str(exc)
+
+    service_timeout = min(timeout, 2.0)
+    return TksDeviceStatus(
+        bootstrap_reachable=bootstrap_reachable,
+        identified_as_tks_ip=identified_as_tks_ip,
+        http_status=http_status,
+        device_time=device_time,
+        clock_skew_seconds=clock_skew_seconds,
+        ssh_reachable=_tcp_reachable(host, _TKS_SSH_PORT, service_timeout),
+        sda_listener_reachable=_tcp_reachable(host, _TKS_SDA_PORT, service_timeout),
+        diagnostics=diagnostics,
+        diagnostics_error=diagnostics_error,
+    )
 
 
 def get_tks_status(host: str, *, timeout: float = 10.0) -> TksStatus:

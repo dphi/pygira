@@ -175,11 +175,28 @@ pygira --device tks-ip logs pull --ip 192.168.1.10  # download decrypted syslog
 pygira --device tks-ip logs tail --ip 192.168.1.10  # live-tail decrypted syslog
 ```
 
+`tks status` is the read-only health check for the always-on gateway services; it
+does not contact or start the port-8080 web application. It verifies the port-80
+TKS-IP identity and device clock, plus the firmware-defined SSH and SDA listeners.
+When an AES key is configured, it also reports recent free memory and load,
+internal SIP-daemon responsiveness, the last raw TKS bus state, and known failure
+signatures from the encrypted diagnostic log. These checks do not prove SIP
+registration, SDA cloud connectivity, or the electrical bus/LED state.
+
 TKS-IP log commands require an AES-192 key; no key is built into `pygira`.
 Supply it with `--aes-key`, `PYGIRA_TKS_AES_KEY`, a local `.env` entry, or the
 selected TKS device's `aes_key` configuration field. Resolution order is CLI,
 process environment, `.env`, then device configuration. Keys may be 24-byte
 text or 48 hexadecimal characters.
+
+Applications can obtain the same normalized snapshot without using the CLI:
+
+```python
+from pygira import get_tks_device_status
+
+status = get_tks_device_status("192.168.1.10", aes_key="...")
+print(status.bootstrap_reachable, status.diagnostics)
+```
 
 **One-shot bootstrap** — set IP, TKS-IP, and weather in a single run:
 

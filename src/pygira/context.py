@@ -303,8 +303,8 @@ def _configured_tks_aes_key(host: str) -> str | None:
     return device.aes_key if device is not None else None
 
 
-def resolve_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str:
-    """Resolve the TKS logfile AES key from options, configuration, or a prompt."""
+def find_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str | None:
+    """Find a TKS logfile AES key without prompting."""
     if aes_key:
         return aes_key
 
@@ -325,6 +325,14 @@ def resolve_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str:
         if device is not None and device.aes_key:
             return device.aes_key
 
+    return None
+
+
+def resolve_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str:
+    """Resolve the TKS logfile AES key from options, configuration, or a prompt."""
+    resolved = find_tks_aes_key(aes_key, host=host)
+    if resolved:
+        return resolved
     return click.prompt(
         "TKS-IP logfile AES key",
         hide_input=True,

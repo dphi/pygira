@@ -17,6 +17,10 @@ def test_public_api_exports_library_entry_points() -> None:
     assert pygira.TlsConfig.__name__ == "TlsConfig"
     assert pygira.DiagnosticPage.__name__ == "DiagnosticPage"
     assert pygira.TksConnectionStatus.__name__ == "TksConnectionStatus"
+    assert pygira.TksDeviceStatus.__name__ == "TksDeviceStatus"
+    assert pygira.TksRuntimeDiagnostics.__name__ == "TksRuntimeDiagnostics"
+    assert callable(pygira.get_tks_device_status)
+    assert callable(pygira.parse_tks_runtime_diagnostics)
     assert issubclass(pygira.AuthenticationError, pygira.PygiraError)
     assert issubclass(pygira.DeviceApiError, pygira.PygiraError)
     assert issubclass(pygira.TransportError, pygira.PygiraError)

@@ -5,6 +5,7 @@ API: HTTPS port 4433, auth: "basic <b64>", XML namespace http://service.schema.g
 
 import base64
 import gzip
+from datetime import datetime, timezone
 from typing import NoReturn
 from unittest.mock import patch
 
@@ -26,6 +27,13 @@ PASS = "secret"
 
 EXPECTED_AUTH = "basic " + base64.b64encode(b"admin:secret").decode()
 TKS_STATE_POLL_COUNT = 2
+EXPECTED_FREE_MEMORY_KIB = 24048
+EXPECTED_RUNNABLE_TASKS = 5
+EXPECTED_TOTAL_TASKS = 72
+EXPECTED_SIP_PID = 1132
+EXPECTED_SIP_MEMORY_KIB = 2396
+EXPECTED_SIP_MEMORY_LIMIT_KIB = 6000
+HTTP_OK = 200
 
 
 # ── auth header format ────────────────────────────────────────────────────────
@@ -377,3 +385,68 @@ def test_get_tks_status_gateway_unreachable() -> None:
 
     assert status.bootstrap_reachable is False
     assert status.app_running is False
+
+
+def test_parse_tks_runtime_diagnostics_extracts_firmware_health_signals() -> None:
+    content = b"""
+Jul 25 10:00:00 tuerko: GREL 1 Failed to receive ACK for Seq 0x01
+Jul 25 10:19:40 logger: MemFree:           24048 kB
+Jul 25 10:19:41 logger: 0.02 0.04 0.00 5/72 26034
+Jul 25 10:19:50 sipd: SIPDPID: 1132 MEMCURR: 2396 > 6000
+Jul 25 10:19:55 tuerko: sipdkeepaliveanswer: 1132 | 1132 | 0
+Jul 25 10:19:55 tuerko: B_GREL_STATE: 5
+Jul 25 10:19:58 sipd: Error from sipd_core_keepalive.
+"""
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+
+    status = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+
+    assert status.free_memory_kib == EXPECTED_FREE_MEMORY_KIB
+    assert status.load_averages == (0.02, 0.04, 0.0)
+    assert status.runnable_tasks == EXPECTED_RUNNABLE_TASKS
+    assert status.total_tasks == EXPECTED_TOTAL_TASKS
+    assert status.sip_pid == EXPECTED_SIP_PID
+    assert status.sip_memory_kib == EXPECTED_SIP_MEMORY_KIB
+    assert status.sip_memory_limit_kib == EXPECTED_SIP_MEMORY_LIMIT_KIB
+    assert status.sip_responsive is True
+    assert status.tks_bus_state == "5"
+    assert status.recent_failures == ("SIP operation failed",)
+
+
+@respx.mock
+def test_get_tks_device_status_uses_only_non_8080_surfaces() -> None:
+    respx.get(f"http://{HOST}/").mock(
+        return_value=Response(
+            200,
+            content=b'<link href="com.gira.tkipgw.web.sites.min.css">',
+            headers={"Date": "Sat, 25 Jul 2026 10:20:00 GMT"},
+        ),
+    )
+
+    with (
+        patch("pygira.config_service._tcp_reachable", side_effect=[True, False]) as tcp,
+        patch(
+            "pygira.config_service.download_tks_logfile",
+            return_value=b"Jul 25 10:20:00 logger: MemFree: 24048 kB\n",
+        ) as download,
+    ):
+        status = cs.get_tks_device_status(
+            HOST,
+            aes_key="0123456789abcdefghijklmn",
+        )
+
+    assert status.bootstrap_reachable is True
+    assert status.identified_as_tks_ip is True
+    assert status.http_status == HTTP_OK
+    assert status.device_time == datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+    assert status.ssh_reachable is True
+    assert status.sda_listener_reachable is False
+    assert status.diagnostics is not None
+    assert status.diagnostics.free_memory_kib == EXPECTED_FREE_MEMORY_KIB
+    assert [call.args[1] for call in tcp.call_args_list] == [222, 50500]
+    download.assert_called_once_with(
+        HOST,
+        timeout=30.0,
+        aes_key="0123456789abcdefghijklmn",
+    )
+    assert all(":8080" not in call.request.url for call in respx.calls)
