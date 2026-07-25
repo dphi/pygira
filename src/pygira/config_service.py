@@ -20,6 +20,7 @@ from pygira.exceptions import (
     InvalidInputError,
     OperationTimeoutError,
     ProtocolError,
+    TransportError,
 )
 from pygira.models import DeviceInfo, NetworkConfig
 
@@ -202,12 +203,16 @@ def download_tks_logfile(
 def _start_tks_webinterface(host: str, timeout: float) -> float:
     started = time.monotonic()
     hook_timeout = min(timeout, 15.0)
-    with httpx.Client(base_url=f"http://{host}", timeout=hook_timeout) as client:
-        resp = client.get(
-            "/json",
-            params={"sid": "undefined", "rid": "undefined", "data": '["documentReady"]'},
-        )
-        resp.raise_for_status()
+    try:
+        with httpx.Client(base_url=f"http://{host}", timeout=hook_timeout) as client:
+            resp = client.get(
+                "/json",
+                params={"sid": "undefined", "rid": "undefined", "data": '["documentReady"]'},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        msg = f"Could not activate the TKS-IP web interface at {host}: {exc}"
+        raise TransportError(msg) from exc
     return started
 
 

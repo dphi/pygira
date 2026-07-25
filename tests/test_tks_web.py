@@ -3,7 +3,9 @@ Tests for tks_web.py — TKS-IP gateway on-demand web app (port 8080).
 """
 
 import json
+import stat
 import urllib.parse
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -30,6 +32,8 @@ from tests.fixtures import (
 
 HOST = "192.168.1.100"
 SESSION_BOOTSTRAP_REQUESTS = 2
+LOGIN_AND_REUSE_REQUESTS = 4
+PRIVATE_FILE_MODE = 0o600
 
 
 def _parse_data(url: str) -> list[object]:
@@ -249,6 +253,54 @@ def test_connect_does_not_mistake_state_cookie_for_command_session() -> None:
 
     with pytest.raises(RuntimeError, match="could not find session id"):
         TksWebClient(HOST).poll()
+
+
+@respx.mock
+def test_connect_reports_existing_gateway_session() -> None:
+    _mock_state()
+    page = """
+    <html>
+      <div class="leCurrentUser">admin</div>
+      <div class="leCurrentUserIP">192.168.1.254</div>
+    </html>
+    """
+    respx.get(f"http://{HOST}:8080/").mock(return_value=Response(200, text=page))
+
+    with pytest.raises(RuntimeError, match=r"already in use.*admin.*192\.168\.1\.254"):
+        TksWebClient(HOST).poll()
+
+
+@respx.mock
+def test_login_reuses_persisted_authenticated_session(tmp_path: Path) -> None:
+    session_path = tmp_path / "session.json"
+    state = _mock_state()
+    root = respx.get(f"http://{HOST}:8080/").mock(
+        return_value=Response(
+            200,
+            content=TKS_ROOT_HTML.encode(),
+            headers={"Set-Cookie": "SID=cookie-session; Path=/"},
+        ),
+    )
+    json_route = respx.get(f"http://{HOST}:8080/json").mock(
+        side_effect=[
+            _body_response(TKS_LOGIN_HTML),
+            _ack_response(),
+            Response(200, json=[1, [0, 21, "#content", [TKS_OVERVIEW_HTML]]]),
+            _body_response(TKS_OVERVIEW_HTML),
+        ],
+    )
+
+    with patch("pygira.tks_web._default_session_cache_path", return_value=session_path):
+        TksWebClient(HOST, persist_session=True).login("admin", "secret")
+        TksWebClient(HOST, persist_session=True).login("ignored", "not-sent")
+
+    assert len(state.calls) == 1
+    assert len(root.calls) == 1
+    assert len(json_route.calls) == LOGIN_AND_REUSE_REQUESTS
+    assert _parse_data(json_route.calls[-1].request.url) == ["reload"]
+    assert json_route.calls[-1].request.headers["Cookie"] == "SID=cookie-session"
+    assert "ignored" not in repr([call.request.url for call in json_route.calls])
+    assert stat.S_IMODE(session_path.stat().st_mode) == PRIVATE_FILE_MODE
 
 
 @respx.mock
@@ -476,6 +528,33 @@ def test_send_raises_on_invalid_site_id_without_retry() -> None:
         TksWebClient(HOST).reload()
 
     assert len(json_route.calls) == 1
+
+
+@respx.mock
+def test_expired_persisted_session_reconnects_once(tmp_path: Path) -> None:
+    session_path = tmp_path / "session.json"
+    with patch("pygira.tks_web._default_session_cache_path", return_value=session_path):
+        previous = TksWebClient(HOST, persist_session=True)
+        previous._sid = "expired-sid"
+        previous._session_cookie = "expired-cookie"
+        previous._persist_session()
+
+        state = _mock_state()
+        root = respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
+        json_route = respx.get(f"http://{HOST}:8080/json").mock(
+            side_effect=[
+                Response(200, json=[0, [0, 19]]),
+                _body_response(TKS_SYSTEM_HTML),
+            ],
+        )
+
+        html = TksWebClient(HOST, persist_session=True).reload()
+
+    assert html == TKS_SYSTEM_HTML
+    assert state.called
+    assert root.called
+    assert len(json_route.calls) == SESSION_BOOTSTRAP_REQUESTS
+    assert not session_path.exists()
 
 
 # ── login ──────────────────────────────────────────────────────────────────

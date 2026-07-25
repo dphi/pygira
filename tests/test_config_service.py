@@ -14,6 +14,7 @@ from lxml import etree
 from pygira import _http
 from pygira import _http as httpx
 from pygira import config_service as cs
+from pygira.exceptions import TransportError
 from pygira.models import NetworkConfig
 from tests import _httpmock as respx
 from tests._httpmock import Request, Response
@@ -319,6 +320,16 @@ def test_activate_tks_webinterface_fails_on_error_state() -> None:
         cs.activate_tks_webinterface(HOST, timeout=1, poll_interval=0.01)
 
     assert "error state 2" in str(exc.value)
+
+
+@respx.mock
+def test_activate_tks_webinterface_contextualizes_bootstrap_failure() -> None:
+    respx.get(
+        f"http://{HOST}/json?sid=undefined&rid=undefined&data=%5B%22documentReady%22%5D",
+    ).mock(side_effect=_refuse)
+
+    with pytest.raises(TransportError, match=rf"activate.*{HOST}.*Connection refused"):
+        cs.activate_tks_webinterface(HOST)
 
 
 # ── TKS-IP read-only status check ─────────────────────────────────────────────

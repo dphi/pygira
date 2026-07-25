@@ -86,6 +86,15 @@ def _require_x1(profile: DeviceProfile, command_name: str) -> None:
         raise UnsupportedCapabilityError(msg)
 
 
+def _login_tks_web(host: str, username: str, password: str) -> TksWebClient:
+    """Start the on-demand web app and return an authenticated session."""
+    with console.status("[bold]Opening TKS-IP web interface…[/bold]"):
+        cs.activate_tks_webinterface(host)
+        client = TksWebClient(host, persist_session=True)
+        client.login(username, password)
+    return client
+
+
 def register(main: click.Group) -> None:
     """Register maintenance and integration commands."""
     _register_set_tks(main)
@@ -203,8 +212,7 @@ def _register_tks_backup_save(main: click.Group) -> None:
     ) -> None:
         """Download a configuration backup from the TKS-IP gateway."""
         host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = TksWebClient(host)
-        client.login(user, pw)
+        client = _login_tks_web(host, user, pw)
         data = client.backup_save()
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         out = output or f"tks-backup-{host.replace('.', '-')}-{ts}.img"
@@ -231,8 +239,7 @@ def _register_tks_backup_restore(main: click.Group) -> None:
                 abort=True,
             )
         host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = TksWebClient(host)
-        client.login(user, pw)
+        client = _login_tks_web(host, user, pw)
         client.backup_restore(Path(backup_file).read_bytes(), Path(backup_file).name)
         console.print("[green]Restore triggered.[/green]")
 
@@ -256,8 +263,7 @@ def _register_tks_firmware_update(main: click.Group) -> None:
                 abort=True,
             )
         host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = TksWebClient(host)
-        client.login(user, pw)
+        client = _login_tks_web(host, user, pw)
         client.firmware_update(Path(firmware_file).read_bytes(), Path(firmware_file).name)
         console.print("[green]Firmware update triggered.[/green]")
 
@@ -268,8 +274,7 @@ def _register_tks_device_info(main: click.Group) -> None:
     def tks_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
         """Show read-only device info from the TKS-IP gateway's Administration page."""
         host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = TksWebClient(host)
-        client.login(user, pw)
+        client = _login_tks_web(host, user, pw)
         for name, value in client.device_info().items():
             console.print(f"[bold]{name}:[/bold] {value}")
 
@@ -280,8 +285,7 @@ def _register_tks_sip_info(main: click.Group) -> None:
     def tks_sip_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
         """Show configured SIP clients and incoming-call assignments."""
         host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = TksWebClient(host)
-        client.login(user, pw)
+        client = _login_tks_web(host, user, pw)
         info = client.sip_clients()
 
         clients = cast("list[dict[str, object]]", info["clients"])

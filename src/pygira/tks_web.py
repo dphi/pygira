@@ -21,12 +21,17 @@ but the CSS classes server-rendered around them ARE stable across sessions
 never by hardcoded id.
 """
 
+import hashlib
 import json
+import os
 import re
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from lxml import html as lxml_html
@@ -53,6 +58,8 @@ _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
 _SESSION_CLOSED = (0, 18)
 _INVALID_SITE_ID = (0, 19)
 _POLL_INTERVAL_SECONDS = 0.5
+_PRIVATE_FILE_MODE = 0o600
+_PRIVATE_DIR_MODE = 0o700
 _NETWORK_FIELD_LABELS = {
     "IP-Adresse": "ip_address",
     "Subnetzmaske": "subnet_mask",
@@ -65,6 +72,63 @@ _NETWORK_FIELD_LABELS = {
 class _PageSnapshot:
     html: str
     commands: list[Any]
+
+
+@dataclass(frozen=True)
+class _PersistedSession:
+    sid: str
+    cookie: str
+
+
+def _default_session_cache_path(host: str) -> Path:
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    host_key = hashlib.sha256(host.encode()).hexdigest()[:16]
+    return cache_root / "pygira" / "tks-web" / f"{host_key}.json"
+
+
+def _load_session(path: Path) -> _PersistedSession | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        sid = payload["sid"]
+        cookie = payload["cookie"]
+    except (FileNotFoundError, OSError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(sid, str) or not sid or not isinstance(cookie, str) or not cookie:
+        return None
+    return _PersistedSession(sid=sid, cookie=cookie)
+
+
+def _save_session(path: Path, session: _PersistedSession) -> None:
+    path.parent.mkdir(mode=_PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
+    temporary_path = Path(temporary_name)
+    try:
+        temporary_path.chmod(_PRIVATE_FILE_MODE)
+        file = os.fdopen(fd, "w", encoding="utf-8")
+        fd = -1
+        with file:
+            json.dump({"sid": session.sid, "cookie": session.cookie}, file)
+            file.flush()
+            os.fsync(file.fileno())
+        temporary_path.replace(path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _session_cookie(headers: dict[str, str]) -> str | None:
+    value = next(
+        (value for name, value in headers.items() if name.casefold() == "set-cookie"),
+        None,
+    )
+    if value is None:
+        return None
+    cookies = SimpleCookie()
+    cookies.load(value)
+    morsel = cookies.get("SID")
+    return morsel.value if morsel is not None else None
 
 
 def _scan_session_signal(commands: list[Any]) -> bool:
@@ -257,6 +321,30 @@ def _contains_widget(html_blob: str, css_class: str) -> bool:
     except ProtocolError:
         return False
     return True
+
+
+def _contains_button(html_blob: str, label: str) -> bool:
+    if not html_blob:
+        return False
+    try:
+        _find_button_id(html_blob, label)
+    except ProtocolError:
+        return False
+    return True
+
+
+def _active_session_owner(html_blob: str) -> tuple[str | None, str | None] | None:
+    """Return the user and IP shown by the gateway's single-session error page."""
+    if not html_blob:
+        return None
+    tree = lxml_html.fromstring(html_blob)
+    users = cast("list[HtmlElement]", tree.xpath('//*[@class="leCurrentUser"]'))
+    addresses = cast("list[HtmlElement]", tree.xpath('//*[@class="leCurrentUserIP"]'))
+    if not users and not addresses:
+        return None
+    user = (users[0].text_content() or "").strip() if users else None
+    address = (addresses[0].text_content() or "").strip() if addresses else None
+    return user or None, address or None
 
 
 def _contains_class(html_blob: str, css_class: str) -> bool:
@@ -527,26 +615,92 @@ def _multipart_body(filename: str, data: bytes) -> tuple[bytes, str]:
 class TksWebClient:
     """Session client for the TKS-IP gateway's on-demand web app (port 8080)."""
 
-    def __init__(self, host: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        host: str,
+        timeout: float = 30.0,
+        *,
+        persist_session: bool = False,
+    ) -> None:
         """Create a client; call login() before any other method."""
-        self._client = httpx.Client(base_url=f"http://{host}:8080", timeout=timeout)
-        self._sid: str | None = None
+        self._host = host
+        self._timeout = timeout
+        self._session_cache_path = _default_session_cache_path(host) if persist_session else None
+        persisted = (
+            _load_session(self._session_cache_path)
+            if self._session_cache_path is not None
+            else None
+        )
+        self._session_cookie = persisted.cookie if persisted is not None else None
+        self._client = self._new_client(self._session_cookie)
+        self._sid = persisted.sid if persisted is not None else None
+        self._restored_session = persisted is not None
         self._navigation_html: str | None = None
         self._current_page_html: str | None = None
+
+    def _new_client(self, cookie: str | None = None) -> httpx.Client:
+        headers = {"Cookie": f"SID={cookie}"} if cookie else None
+        return httpx.Client(
+            base_url=f"http://{self._host}:8080",
+            headers=headers,
+            timeout=self._timeout,
+        )
+
+    def _invalidate_session(self) -> None:
+        self._sid = None
+        self._session_cookie = None
+        self._restored_session = False
+        self._client = self._new_client()
+        self._navigation_html = None
+        self._current_page_html = None
+        if self._session_cache_path is not None:
+            self._session_cache_path.unlink(missing_ok=True)
+
+    def _persist_session(self) -> None:
+        if self._session_cache_path is None or self._sid is None:
+            return
+        cookie = self._session_cookie or self._client._cookie_value("SID")
+        if cookie is None:
+            return
+        self._session_cookie = cookie
+        _save_session(
+            self._session_cache_path,
+            _PersistedSession(sid=self._sid, cookie=cookie),
+        )
 
     def _connect(self) -> None:
         # The browser always establishes bootstrap state before opening the
         # root page. In particular, the SID cookie returned by /state is not
         # itself a command-loop session id.
+        self._client = self._new_client()
         state = self._client.get("/state", params={"callback": "setState"})
         state.raise_for_status()
         resp = self._client.get("/")
         resp.raise_for_status()
-        match = _SID_RE.search(resp.content.decode(errors="replace"))
+        page = resp.content.decode(errors="replace")
+        match = _SID_RE.search(page)
         if not match:
+            owner = _active_session_owner(page)
+            if owner is not None:
+                user, address = owner
+                identity = " ".join(
+                    part
+                    for part in (
+                        f"user {user!r}" if user else None,
+                        f"from {address}" if address else None,
+                    )
+                    if part is not None
+                )
+                msg = (
+                    f"the web assistant is already in use {identity}; "
+                    "reuse the original pygira session or wait up to one minute"
+                )
+                raise ProtocolError(_PROTOCOL, "connect", "session-in-use", msg)
             msg = "could not find session id in TKS-IP root page"
             raise ProtocolError(_PROTOCOL, "connect", "missing-session", msg)
         self._sid = match.group(1)
+        self._session_cookie = _session_cookie(resp.headers)
+        self._restored_session = False
         self._navigation_html = None
         self._current_page_html = None
 
@@ -559,11 +713,18 @@ class TksWebClient:
         )
         resp.raise_for_status()
         commands = cast("list[Any]", resp.json())
-        if _scan_session_signal(commands):
+        try:
+            session_closed = _scan_session_signal(commands)
+        except ProtocolError as exc:
+            if exc.code != "invalid-site-id" or _reconnected or not self._restored_session:
+                raise
+            self._invalidate_session()
+            return self._send(data, _reconnected=True)
+        if session_closed:
             if _reconnected:
                 msg = "TKS-IP session closed repeatedly — could not re-establish a session"
                 raise ProtocolError(_PROTOCOL, "command loop", "session-closed", msg)
-            self._sid = None
+            self._invalidate_session()
             return self._send(data, _reconnected=True)
         return commands
 
@@ -620,11 +781,18 @@ class TksWebClient:
         if not isinstance(payload, list):
             msg = "non-list response from TKS-IP command poll"
             raise ProtocolError(_PROTOCOL, "poll", "invalid-response", msg)
-        if _scan_session_signal(payload):
+        try:
+            session_closed = _scan_session_signal(payload)
+        except ProtocolError as exc:
+            if exc.code != "invalid-site-id" or _reconnected or not self._restored_session:
+                raise
+            self._invalidate_session()
+            return self.poll(_reconnected=True)
+        if session_closed:
             if _reconnected:
                 msg = "TKS-IP session closed repeatedly — could not re-establish a session"
                 raise ProtocolError(_PROTOCOL, "command loop", "session-closed", msg)
-            self._sid = None
+            self._invalidate_session()
             return self.poll(_reconnected=True)
         return payload
 
@@ -651,6 +819,17 @@ class TksWebClient:
         login-button click in the real protocol.
         """
         html = self.reload()
+        if not _contains_widget(html, "lLDCName"):
+            if _contains_link(html, "Geräteinfos"):
+                self._navigation_html = html
+            elif _contains_button(html, "Übersicht"):
+                self._current_page_html = html
+            else:
+                msg = "saved TKS-IP session returned an unrecognized authenticated page"
+                raise ProtocolError(_PROTOCOL, "login", "unknown-page", msg)
+            self._persist_session()
+            return
+
         user_id = _find_widget_id(html, "lLDCName")
         pass_id = _find_widget_id(html, "lLDCPassword")
         self._send(["value", user_id, username, True, False, False])
@@ -668,6 +847,7 @@ class TksWebClient:
             command = "TKS-IP login"
             response = {"id": "timeout", "error": msg}
             raise AuthenticationError(command, response) from exc
+        self._persist_session()
 
     def _navigate_page(
         self,

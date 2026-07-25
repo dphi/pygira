@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from pygira.cli import main
 from pygira.config_service import TksStatus, TksWebInterfaceActivation
 from pygira.devices.g1 import PROFILE as G1_PROFILE
+from pygira.exceptions import OperationTimeoutError
 from pygira.gds import GdsClient
 from pygira.models import WeatherStation
 
@@ -87,6 +88,7 @@ def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
 
     with (
         patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
         patch("pygira.commands.maintenance.TksWebClient", return_value=client),
     ):
         runner = CliRunner()
@@ -118,6 +120,9 @@ def test_tks_info_command() -> None:
 
     with (
         patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch(
+            "pygira.commands.maintenance.cs.activate_tks_webinterface",
+        ) as activate_web,
         patch("pygira.commands.maintenance.TksWebClient", return_value=client),
     ):
         result = CliRunner().invoke(main, ["tks-info"])
@@ -125,6 +130,31 @@ def test_tks_info_command() -> None:
     assert result.exit_code == 0, result.output
     assert "Software-Version" in result.output
     assert "05.04.00.08" in result.output
+    activate_web.assert_called_once_with(HOST)
+    client.login.assert_called_once_with("admin", "secret")
+
+
+def test_tks_info_reports_web_interface_activation_failure() -> None:
+    login = (HOST, "admin", "secret")
+    client_type = MagicMock()
+    failure = OperationTimeoutError(
+        "TKS-IP web interface did not start: <urlopen error [Errno 61] Connection refused>",
+    )
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch(
+            "pygira.commands.maintenance.cs.activate_tks_webinterface",
+            side_effect=failure,
+        ),
+        patch("pygira.commands.maintenance.TksWebClient", client_type),
+    ):
+        result = CliRunner().invoke(main, ["tks", "info"])
+
+    assert result.exit_code == 1
+    assert "Error: TKS-IP web interface did not start" in result.output
+    assert "Connection refused" in result.output
+    client_type.assert_not_called()
 
 
 def test_tks_sip_info_command_never_prints_password_values() -> None:
@@ -150,6 +180,7 @@ def test_tks_sip_info_command_never_prints_password_values() -> None:
 
     with (
         patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
         patch("pygira.commands.maintenance.TksWebClient", return_value=client),
     ):
         result = CliRunner().invoke(main, ["tks", "sip", "info"])
@@ -183,7 +214,10 @@ password = "other-secret"
     client.backup_save.return_value = b"backup"
     output = tmp_path / "backup.img"
 
-    with patch("pygira.commands.maintenance.TksWebClient", return_value=client):
+    with (
+        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
+        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+    ):
         result = CliRunner().invoke(
             main,
             [
