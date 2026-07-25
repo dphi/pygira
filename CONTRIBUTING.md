@@ -55,8 +55,11 @@ PYGIRA_HARDWARE_DEVICE=g1 \
 PYGIRA_HARDWARE_HOST=192.168.1.240 \
 PYGIRA_HARDWARE_USERNAME=device \
 PYGIRA_HARDWARE_PASSWORD='...' \
-uv run pytest -m hardware tests/integration
+uv run pytest --no-cov -m hardware tests/integration
 ```
+
+The credential-free TKS-IP bootstrap/status probe uses the same opt-in with
+`PYGIRA_HARDWARE_DEVICE=tks-ip`; only `PYGIRA_HARDWARE_HOST` is required.
 
 The default test suite collects these tests but skips them before any network
 connection. Keep hardware tests non-destructive unless a separate marker and

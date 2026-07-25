@@ -239,6 +239,9 @@ Optional read-only hardware smoke tests are documented in the contributing guide
 an explicit enable flag and environment-only credentials; the normal test suite never connects
 to hardware.
 
+The [TKS-IP API support map](docs/tks-ip-api-support.md) distinguishes supported management
+interfaces from privacy-sensitive, proprietary, and unsafe firmware surfaces.
+
 ## Architecture
 
 ### Two protocols, not one

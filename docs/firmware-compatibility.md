@@ -13,6 +13,7 @@ as a protocol contract.
 | Firmware status and update | 3.5.63 | 2.8.874.0 | Beta |
 | GDS weather and TKS configuration | 3.5.63 | Not supported | Confirmed on G1 |
 | X1 program export and import | Not supported | 2.8.874.0 | Experimental |
+| TKS-IP bootstrap/status probe | Separate TKS-IP gateway | Separate TKS-IP gateway | Confirmed |
 | TKS-IP backup and firmware operations | Separate TKS-IP gateway | Separate TKS-IP gateway | Beta |
 
 ## Evidence levels

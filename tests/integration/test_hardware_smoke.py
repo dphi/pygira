@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from pygira import G1, X1
+from pygira import config_service as cs
 
 pytestmark = pytest.mark.hardware
 
@@ -29,14 +30,21 @@ def hardware_target() -> HardwareTarget:
     device_type = os.environ.get("PYGIRA_HARDWARE_DEVICE", "").lower()
     host = os.environ.get("PYGIRA_HARDWARE_HOST", "")
     password = os.environ.get("PYGIRA_HARDWARE_PASSWORD", "")
-    if device_type not in {"g1", "x1"} or not host or not password:
-        pytest.skip("hardware tests require device type, host, and password environment variables")
+    if device_type not in {"g1", "x1", "tks-ip"} or not host:
+        pytest.skip("hardware tests require a supported device type and host")
+    if device_type != "tks-ip" and not password:
+        pytest.skip("G1/X1 hardware tests require a device password environment variable")
     username = os.environ.get("PYGIRA_HARDWARE_USERNAME", "device")
     return HardwareTarget(device_type, host, username, password)
 
 
-def test_hardware_device_info_is_readable(hardware_target: HardwareTarget) -> None:
-    """Read and normalize identity without changing device state."""
+def test_hardware_read_only_status(hardware_target: HardwareTarget) -> None:
+    """Read device identity or TKS-IP health without changing device state."""
+    if hardware_target.device_type == "tks-ip":
+        status = cs.get_tks_status(hardware_target.host)
+        assert status.bootstrap_reachable
+        return
+
     facade_type = G1 if hardware_target.device_type == "g1" else X1
     device = facade_type(
         hardware_target.host,
