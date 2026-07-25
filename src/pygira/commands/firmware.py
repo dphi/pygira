@@ -55,9 +55,7 @@ def upgrade(**kwargs: object) -> None:
     device = _device(ip, password, username, timeout)
     if firmware_file:
         console.print(f"Uploading firmware from {firmware_file!r}…")
-        device.upload_firmware(Path(firmware_file))
-        console.print("Upload complete. Triggering install…")
-        result = device.initiate_local_install()
+        result = device.install_firmware(Path(firmware_file))
         console.print_json(json.dumps(result))
     else:
         console.print("Starting online firmware update…")
@@ -65,6 +63,11 @@ def upgrade(**kwargs: object) -> None:
         console.print_json(json.dumps(result))
 
     if no_wait:
+        return
+    if not device.can_wait_for_upgrade:
+        console.print(
+            "[yellow]Firmware update triggered; this device does not expose progress.[/yellow]",
+        )
         return
     console.print("Waiting for update to complete (up to 5 min)…")
     done = device.wait_for_completion()

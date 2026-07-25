@@ -26,3 +26,4 @@ class ResolvedTarget:
     username: str
     password: str
     timeout: float
+    aes_key: str | bytes | None = None

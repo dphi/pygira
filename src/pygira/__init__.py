@@ -12,6 +12,7 @@ from pygira.config_service import (
 )
 from pygira.core.types import DeviceType
 from pygira.devices.g1 import G1
+from pygira.devices.tks_ip import TksIp
 from pygira.devices.x1 import X1
 from pygira.exceptions import (
     AuthenticationError,
@@ -61,6 +62,7 @@ __all__ = [
     "TlsConfig",
     "TksConnectionStatus",
     "TksDeviceStatus",
+    "TksIp",
     "TksRuntimeDiagnostics",
     "UnsupportedCapabilityError",
     "WeatherStation",

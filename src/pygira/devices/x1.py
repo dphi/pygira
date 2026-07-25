@@ -150,6 +150,11 @@ class X1:
         """Upload a firmware archive."""
         self.api.upload_firmware(path)
 
+    def install_firmware(self, path: Path) -> dict:
+        """Upload a firmware archive and start its installation."""
+        self.upload_firmware(path)
+        return self.initiate_local_install()
+
     def initiate_local_install(self) -> dict:
         """Start a local firmware installation."""
         return self.api.initiate_local_install()
@@ -157,6 +162,11 @@ class X1:
     def wait_for_completion(self, poll_interval: float = 5.0, max_wait: float = 300.0) -> bool:
         """Wait for the device to finish an in-flight operation."""
         return self.api.wait_for_completion(poll_interval=poll_interval, max_wait=max_wait)
+
+    @property
+    def can_wait_for_upgrade(self) -> bool:
+        """Whether firmware completion can be observed."""
+        return True
 
     def commissioning_test(self) -> dict:
         """Run the built-in commissioning test."""

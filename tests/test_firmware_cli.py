@@ -41,7 +41,7 @@ def test_local_upgrade_uploads_and_can_return_without_waiting(tmp_path: Path) ->
     firmware = tmp_path / "firmware.zip"
     firmware.write_bytes(b"PK\x03\x04")
     client = MagicMock()
-    client.initiate_local_install.return_value = {"started": True}
+    client.install_firmware.return_value = {"started": True}
     with patch("pygira.commands.firmware._device", return_value=client):
         result = CliRunner().invoke(
             main,
@@ -49,7 +49,7 @@ def test_local_upgrade_uploads_and_can_return_without_waiting(tmp_path: Path) ->
         )
 
     assert result.exit_code == 0, result.output
-    client.upload_firmware.assert_called_once_with(firmware)
+    client.install_firmware.assert_called_once_with(firmware)
     client.wait_for_completion.assert_not_called()
 
 
