@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import ParamSpec, TypeVar, cast
 
 import click
+from rich.table import Table
 
 from pygira import api as api_mod
 from pygira import config_service as cs
@@ -93,6 +94,7 @@ def register(main: click.Group) -> None:
     _register_tks_backup_restore(main)
     _register_tks_firmware_update(main)
     _register_tks_device_info(main)
+    _register_tks_sip_info(main)
     _register_weather(main)
     _register_basic_maintenance(main)
     _register_pull_logs(main)
@@ -270,6 +272,57 @@ def _register_tks_device_info(main: click.Group) -> None:
         client.login(user, pw)
         for name, value in client.device_info().items():
             console.print(f"[bold]{name}:[/bold] {value}")
+
+
+def _register_tks_sip_info(main: click.Group) -> None:
+    @main.command("tks-sip-info")
+    @_tks_login_options
+    def tks_sip_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
+        """Show configured SIP clients and incoming-call assignments."""
+        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
+        client = TksWebClient(host)
+        client.login(user, pw)
+        info = client.sip_clients()
+
+        clients = cast("list[dict[str, object]]", info["clients"])
+        client_table = Table(title="SIP clients")
+        client_table.add_column("Name")
+        client_table.add_column("Selected")
+        client_table.add_column("Username")
+        client_table.add_column("Password configured")
+        for item in clients:
+            password_configured = item["password_configured"]
+            client_table.add_row(
+                str(item["name"]),
+                "yes" if item["selected"] else "",
+                str(item["username"] or ""),
+                (
+                    ""
+                    if password_configured is None
+                    else ("yes" if password_configured else "no")
+                ),
+            )
+        console.print(client_table)
+
+        groups = cast("list[dict[str, object]]", info["incoming_calls"])
+        call_table = Table(title="Selected client's incoming-call assignments")
+        call_table.add_column("Group")
+        call_table.add_column("Call")
+        call_table.add_column("Assigned")
+        for group in groups:
+            calls = cast("list[dict[str, object]]", group["calls"])
+            for call in calls:
+                call_table.add_row(
+                    str(group["name"]),
+                    str(call["name"]),
+                    "yes" if call["assigned"] else "no",
+                )
+        console.print(call_table)
+        acknowledged = "yes" if info["security_warning_acknowledged"] else "no"
+        console.print(
+            "[yellow]Device warning: IP-phone door-opener telegrams are unencrypted "
+            f"(warning acknowledged: {acknowledged}).[/yellow]",
+        )
 
 
 def _register_weather(main: click.Group) -> None:

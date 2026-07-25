@@ -150,6 +150,77 @@ def _find_button_id(html: str, label: str) -> str:
     return control_id
 
 
+def _find_assistant_action_id(html: str, label: str) -> str:
+    """Find the launch button in a labelled overview-menu row."""
+    tree = lxml_html.fromstring(html)
+    controls = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            '//tr[td[1][normalize-space(.)=$label]]'
+            '//div[@id][button[normalize-space(.)="Gira Assistent starten"]]',
+            label=label,
+        ),
+    )
+    if not controls:
+        msg = f"TKS-IP assistant action labelled {label!r} not found"
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-assistant", msg)
+    control_id = controls[0].get("id")
+    assert control_id is not None
+    return control_id
+
+
+def _menu_action(html: str, label: str) -> list[object]:
+    """Resolve a menu label to its link or assistant-button event."""
+    try:
+        return ["link", _find_link_id(html, label)]
+    except ProtocolError:
+        return ["click", _find_assistant_action_id(html, label)]
+
+
+def _contains_menu_action(html_blob: str, label: str) -> bool:
+    if not html_blob:
+        return False
+    try:
+        _menu_action(html_blob, label)
+    except ProtocolError:
+        return False
+    return True
+
+
+def _find_tab_selection(html: str, tabbar_class: str, label: str) -> tuple[str, str]:
+    """Find the dynamic tabbar and tab ids for a visible tab label."""
+    tree = lxml_html.fromstring(f"<div>{html}</div>")
+    tabbars = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            '//*[contains(concat(" ", normalize-space(@class), " "), $class_name)]'
+            "//div[@id][ul]",
+            class_name=f" {tabbar_class} ",
+        ),
+    )
+    tabs = cast(
+        "list[HtmlElement]",
+        tree.xpath('//li[@id][normalize-space(.)=$label]', label=label),
+    )
+    if not tabbars or not tabs:
+        msg = f"TKS-IP tab labelled {label!r} not found"
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-tab", msg)
+    tabbar_id = tabbars[0].get("id")
+    tab_id = tabs[0].get("id")
+    assert tabbar_id is not None and tab_id is not None
+    return tabbar_id, tab_id
+
+
+def _html_fragments(command: list[Any]) -> list[str]:
+    return [
+        item
+        for arg in command
+        if isinstance(arg, list)
+        for item in arg
+        if isinstance(item, str) and item.lstrip().startswith("<")
+    ]
+
+
 def _collect_html_fragments(commands: list[Any]) -> str:
     """Concatenate every HTML fragment argument in a command response.
 
@@ -164,13 +235,7 @@ def _collect_html_fragments(commands: list[Any]) -> str:
     for cmd in commands[1:]:
         if not isinstance(cmd, list):
             continue
-        for arg in cmd:
-            if isinstance(arg, list):
-                fragments.extend(
-                    item
-                    for item in arg
-                    if isinstance(item, str) and item.lstrip().startswith("<")
-                )
+        fragments.extend(_html_fragments(cmd))
     return "".join(fragments)
 
 
@@ -331,6 +396,118 @@ def _parse_network_info(html_blob: str, commands: list[Any]) -> dict[str, object
             None,
         ),
     }
+
+
+def _parse_sip_clients(html_blob: str, commands: list[Any]) -> dict[str, object]:
+    """Parse configured SIP clients while deliberately discarding passwords."""
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    values = _textbox_values(commands)
+    entries = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            '//*[contains(concat(" ", normalize-space(@class), " "), '
+            '" ssipPTableEntry ")][descendant::input]',
+        ),
+    )
+    selected_row = next(
+        (
+            command[3]
+            for command in commands
+            if isinstance(command, list)
+            and len(command) >= _TEXTBOX_VALUE_COMMAND_MIN_PARTS
+            and command[:2] == [25, 30]
+            and isinstance(command[3], str)
+        ),
+        None,
+    )
+
+    def owner(css_class: str) -> "HtmlElement | None":
+        matches = cast("list[HtmlElement]", tree.xpath(f'//*[@class="{css_class}"]'))
+        return matches[0] if matches else None
+
+    def textbox(container: "HtmlElement | None") -> str | None:
+        selector = _control_selector(container) if container is not None else None
+        return values.get(selector) if selector else None
+
+    username = textbox(owner("ssipPATUserName"))
+    password = textbox(owner("ssipPATPassword"))
+    warning = owner("ssipPAWCheck")
+    clients: list[dict[str, object]] = []
+    for entry in entries:
+        name = textbox(entry)
+        if name is None:
+            continue
+        row = cast("list[HtmlElement]", entry.xpath("ancestor::tr[@id][1]"))
+        row_selector = f"#{row[0].get('id')}" if row else None
+        is_selected = row_selector == selected_row or (selected_row is None and not clients)
+        clients.append(
+            {
+                "name": name,
+                "selected": is_selected,
+                "username": username if is_selected else None,
+                "password_configured": bool(password) if is_selected else None,
+            },
+        )
+    return {
+        "clients": clients,
+        "security_warning_acknowledged": bool(
+            warning is not None and warning.xpath(".//input[@checked]"),
+        ),
+    }
+
+
+def _parse_sip_incoming_calls(commands: list[Any]) -> list[dict[str, object]]:
+    """Parse grouped incoming-call assignments from the selected SIP tab."""
+    groups: list[dict[str, object]] = []
+    by_selector: dict[str, dict[str, object]] = {}
+    for command in commands:
+        if (
+            not isinstance(command, list)
+            or len(command) < HTML_BODY_COMMAND_MIN_PARTS
+            or command[:2] != [0, 21]
+            or not isinstance(command[2], str)
+        ):
+            continue
+        target = command[2]
+        for fragment in _html_fragments(command):
+            tree = lxml_html.fromstring(f"<div>{fragment}</div>")
+            group_rows = cast(
+                "list[HtmlElement]",
+                tree.xpath('//tr[@id][descendant::*[@class="groupTitleInternal"]]'),
+            )
+            for row in group_rows:
+                title = " ".join(
+                    row.xpath('.//*[@class="groupTitleInternal"]')[0].text_content().split(),
+                )
+                selector = f"#{row.get('id')}"
+                group: dict[str, object] = {"name": title, "calls": []}
+                groups.append(group)
+                by_selector[selector] = group
+
+            group_selector = target.split(" ", 1)[0]
+            current_group = by_selector.get(group_selector)
+            if current_group is None:
+                continue
+            call_rows = cast(
+                "list[HtmlElement]",
+                tree.xpath(
+                    '//tr[descendant::*[contains('
+                    'concat(" ", normalize-space(@class), " "), " ssipPICTableEntry ")]]',
+                ),
+            )
+            calls = cast("list[dict[str, object]]", current_group["calls"])
+            for row in call_rows:
+                name = " ".join(row.text_content().split())
+                checkbox = cast("list[HtmlElement]", row.xpath(".//input[@type='checkbox']"))
+                calls.append(
+                    {
+                        "name": name,
+                        "assigned": bool(
+                            checkbox and checkbox[0].get("checked") is not None,
+                        ),
+                    },
+                )
+    return groups
 
 
 def _multipart_body(filename: str, data: bytes) -> tuple[bytes, str]:
@@ -503,7 +680,7 @@ class TksWebClient:
             overview_id = _find_button_id(self._current_page_html, "Übersicht")
             overview = self._wait_for_page(
                 self._send(["click", overview_id]),
-                lambda html: _contains_link(html, label),
+                lambda html: _contains_menu_action(html, label),
                 timeout=timeout,
                 operation="Übersicht",
             )
@@ -511,9 +688,8 @@ class TksWebClient:
             self._current_page_html = None
         menu_html = self._navigation_html or self.reload()
         self._navigation_html = menu_html
-        link_id = _find_link_id(menu_html, label)
         page = self._wait_for_page(
-            self._send(["link", link_id]),
+            self._send(_menu_action(menu_html, label)),
             predicate,
             timeout=timeout,
             operation=label,
@@ -561,6 +737,28 @@ class TksWebClient:
             timeout=timeout,
         )
         return _parse_network_info(page.html, page.commands)
+
+    def sip_clients(self, *, timeout: float = 10.0) -> dict[str, object]:
+        """List SIP client names and selected-client details without exposing passwords."""
+        page = self._navigate_page(
+            "IP-Telefone konfigurieren",
+            lambda html: _contains_class(html, "ssipPAssistant"),
+            timeout=timeout,
+        )
+        result = _parse_sip_clients(page.html, page.commands)
+        tabbar_id, tab_id = _find_tab_selection(
+            page.html,
+            "ssipPTabBar",
+            "Rufe (eingehend)",
+        )
+        incoming = self._wait_for_page(
+            self._send(["value", tabbar_id, tab_id]),
+            lambda html: _contains_class(html, "ssipPICTable"),
+            timeout=timeout,
+            operation="Rufe (eingehend)",
+        )
+        result["incoming_calls"] = _parse_sip_incoming_calls(incoming.commands)
+        return result
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""

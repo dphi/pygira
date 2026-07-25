@@ -197,6 +197,15 @@ TKS_SYSTEM_HTML = """\
 # converge on the combined Administration assistant page (2026-07-04 HAR).
 TKS_OVERVIEW_HTML = """\
 <div id="i112" class="mainMenu"><div id="i113" class="mmTable"><table id="c67">
+<tr id="e12" class="ui-single">
+  <td class="mmTableEntry cell0"><div class="ui-label">
+    <span>IP-Telefone konfigurieren</span>
+  </div></td>
+  <td class="mmTableEntry cell1"></td>
+  <td class="mmTableEntry cell2"><div id="c80">
+    <button><span>Gira Assistent starten</span></button>
+  </div></td>
+</tr>
 <tr id="e13" class="ui-single"><td class="mmTableEntry cell0"><div class="ui-label">
 <a id="l2"><span class="ui-text-style-default">Netzwerkzugang einrichten</span></a>
 <a id="l5"><span class="ui-text-style-default">Sicherung / Wiederherstellung</span></a>
@@ -252,6 +261,63 @@ TKS_NETWORK_HTML = """\
     </div></div>
     <div class="a2VRadio"><div id="c222"><input name="g4" type="radio" /></div></div>
   </div>
+</div>
+"""
+
+TKS_SIP_CLIENTS_HTML = """\
+<div id="c2"><button><span>Übersicht</span></button></div>
+<div class="ssipPAssistant">
+  <div class="ssipPTabBar e44"><div id="c110"><ul></ul></div></div>
+  <li id="e45"><a>Zuordnung</a></li>
+  <li id="e46"><a>Rufe (eingehend)</a></li>
+  <table class="ssipPTable"><tbody>
+    <tr id="e16"><td class="ssipPTableEntry cell0">
+      <div id="c108"><input type="text" /></div>
+    </td></tr>
+    <tr id="e17"><td class="ssipPTableEntry cell0">
+      <div id="c109"><input type="text" /></div>
+    </td></tr>
+  </tbody></table>
+  <div class="ssipPAssignment">
+    <div class="ssipPATUserName"><div id="c114"><input type="text" /></div></div>
+    <div class="ssipPATPassword"><div id="c116"><input type="password" /></div></div>
+    <div class="ssipPATRePassword"><div id="c119"><input type="password" /></div></div>
+    <div class="ssipPAWCheck"><div id="c121">
+      <input type="checkbox" checked="checked" />
+    </div></div>
+  </div>
+</div>
+"""
+
+TKS_SIP_CALL_GROUP_ONE_HTML = """\
+<tr id="e19" class="ui-single">
+  <td class="groupTitleInternal"><span>Door station</span></td>
+  <td class="groupContentInternal"><table></table></td>
+</tr>
+"""
+
+TKS_SIP_CALL_GROUP_TWO_HTML = """\
+<tr id="e21" class="ui-single">
+  <td class="groupTitleInternal"><span>Internal</span></td>
+  <td class="groupContentInternal"><table></table></td>
+</tr>
+"""
+
+TKS_SIP_CALL_ONE_HTML = """\
+<tr><td class="ssipPICTableEntry cell0"><div id="c125">
+  <input type="checkbox" checked="checked" />
+</div></td><td class="ssipPICTableEntry cell1"><span>Main entrance</span></td></tr>
+"""
+
+TKS_SIP_CALL_TWO_HTML = """\
+<tr><td class="ssipPICTableEntry cell0"><div id="c126">
+  <input type="checkbox" />
+</div></td><td class="ssipPICTableEntry cell1"><span>Concierge</span></td></tr>
+"""
+
+TKS_SIP_INCOMING_HTML = """\
+<div class="ssipPIncomingCalls">
+  <div class="ssipPICTable"><table id="c124"></table></div>
 </div>
 """
 

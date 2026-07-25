@@ -59,6 +59,7 @@ COMMAND_MOVES: dict[str, tuple[str, ...]] = {
     "activate-tks-web": ("tks", "activate"),
     "tks-status": ("tks", "status"),
     "tks-info": ("tks", "info"),
+    "tks-sip-info": ("tks", "sip", "info"),
     "tks-backup-save": ("tks", "backup", "save"),
     "tks-backup-restore": ("tks", "backup", "restore"),
     "tks-firmware-update": ("tks", "firmware", "update"),
@@ -82,6 +83,7 @@ GROUP_HELP = {
     "weather": "Configure the G1 weather display.",
     "tks": "Manage G1 door communication and TKS-IP gateways.",
     "backup": "Save or restore a TKS-IP configuration backup.",
+    "sip": "Inspect TKS-IP SIP client configuration.",
     "program": "Export or import an X1 program.",
 }
 
@@ -108,6 +110,7 @@ PATH_SUPPORT: dict[tuple[str, ...], DeviceSupport] = {
     ("tks", "activate"): TKS_IP,
     ("tks", "status"): TKS_IP,
     ("tks", "info"): TKS_IP,
+    ("tks", "sip"): TKS_IP,
     ("tks", "backup"): TKS_IP,
     ("tks", "firmware"): TKS_IP,
     ("weather",): G1,

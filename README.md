@@ -167,6 +167,7 @@ pygira gds --ip 192.168.1.240 <subcommand>  # low-level GDS WebSocket access
 pygira tks activate --tks-ip 192.168.1.10       # start the port-8080 web app
 pygira tks status --tks-ip 192.168.1.10
 pygira tks info --tks-ip 192.168.1.10
+pygira tks sip info --tks-ip 192.168.1.10
 pygira tks backup save --tks-ip 192.168.1.10
 pygira tks backup restore backup.img --tks-ip 192.168.1.10
 pygira tks firmware update firmware.bin --tks-ip 192.168.1.10
@@ -259,7 +260,7 @@ On top of those, two further protocols exist:
 | GDS WebSocket | 4432 WSS | `gds.py` | G1 only: weather + TKS-IP config, factory reset |
 | configurationservice | 4433 HTTPS | `config_service.py` | X1 log download, X1 syslog severity; G1 detection fallback only |
 | GDS-REST-API | 443 HTTPS `/api` | — | X1 only: Gira IoT/Home App KNX control (not used for provisioning) |
-| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: read-only device/date/network info, backup/restore, firmware update |
+| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: read-only device/date/network/SIP info, backup/restore, firmware update |
 
 **TKS-IP gateway web app** (separate physical device, not G1/X1): the on-demand
 port-8080 app (`activate-tks-web` starts it) speaks a stateful JSON
@@ -271,7 +272,14 @@ CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`). Command responses
 are asynchronous: page fragments may arrive in later 500 ms polls, and one
 content command may carry multiple fragments. `TksWebClient` buffers those
 fragments and exposes read-only `device_info()`, `date_time_info()`, and
-`network_info()` methods.
+`network_info()` methods. `sip_clients()` also discovers configured IP-phone
+client names plus the selected client's username and incoming-call assignments.
+It reports only whether a password is configured; password values received from
+the legacy UI are deliberately discarded.
+
+The gateway itself warns that using IP phones sends door-opener telegrams to
+the TKS-IP gateway without encryption. Treat this integration as a trusted-LAN
+legacy feature, not as a secure SIP provisioning channel.
 
 **X1 GDS WebSocket**: Port 4432 is open on the X1 and accepts connections with the same URL/auth format as the G1 (`wss://<host>:4432/gds/api?ui<base64>`). `RegisterApplication` succeeds. However, the X1 GDS is **event-push only** — it sends live value change events (e.g. clock ticks) after registration but does not respond to any query commands (`GetProcessView`, `GetDeviceConfig`, `GetCurrentUser` all time out). All X1 provisioning commands go through iscwebservice at `/webservice`.
 

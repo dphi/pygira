@@ -127,6 +127,41 @@ def test_tks_info_command() -> None:
     assert "05.04.00.08" in result.output
 
 
+def test_tks_sip_info_command_never_prints_password_values() -> None:
+    client = MagicMock()
+    client.sip_clients.return_value = {
+        "clients": [
+            {
+                "name": "Front desk",
+                "selected": True,
+                "username": "sip-user",
+                "password_configured": True,
+            },
+        ],
+        "incoming_calls": [
+            {
+                "name": "Door station",
+                "calls": [{"name": "Main entrance", "assigned": True}],
+            },
+        ],
+        "security_warning_acknowledged": True,
+    }
+    login = (HOST, "admin", "secret")
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
+        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+    ):
+        result = CliRunner().invoke(main, ["tks", "sip", "info"])
+
+    assert result.exit_code == 0, result.output
+    assert "Front desk" in result.output
+    assert "sip-user" in result.output
+    assert "Main entrance" in result.output
+    assert "unencrypted" in result.output
+    assert "secret" not in result.output
+
+
 def test_tks_backup_accepts_direct_ip_and_command_local_config(tmp_path: Path) -> None:
     config_path = tmp_path / "devices.toml"
     config_path.write_text(

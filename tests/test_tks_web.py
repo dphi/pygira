@@ -19,6 +19,12 @@ from tests.fixtures import (
     TKS_NETWORK_HTML,
     TKS_OVERVIEW_HTML,
     TKS_ROOT_HTML,
+    TKS_SIP_CALL_GROUP_ONE_HTML,
+    TKS_SIP_CALL_GROUP_TWO_HTML,
+    TKS_SIP_CALL_ONE_HTML,
+    TKS_SIP_CALL_TWO_HTML,
+    TKS_SIP_CLIENTS_HTML,
+    TKS_SIP_INCOMING_HTML,
     TKS_SYSTEM_HTML,
 )
 
@@ -89,6 +95,13 @@ def test_find_button_id_finds_overview_control_by_label() -> None:
     assert tks_web._find_button_id(TKS_DATE_TIME_HTML, "Übersicht") == "c2"
 
 
+def test_find_assistant_action_id_finds_row_scoped_launch_button() -> None:
+    assert tks_web._find_assistant_action_id(
+        TKS_OVERVIEW_HTML,
+        "IP-Telefone konfigurieren",
+    ) == "c80"
+
+
 def test_parse_device_info_pairs_names_with_values() -> None:
     info = tks_web._parse_device_info(TKS_DEVICE_INFO_HTML)
     assert info["Software-Version"] == "05.04.00.08"
@@ -143,6 +156,68 @@ def test_parse_network_info_combines_dom_state_and_command_values() -> None:
         "default_gateway": "192.0.2.1",
         "video_resolution": "VGA",
     }
+
+
+def test_parse_sip_clients_discards_password_values() -> None:
+    commands = [
+        [25, 30, "#c104", "#e17"],
+        [26, 32, "#c108", "Front desk"],
+        [26, 32, "#c109", "Mobile"],
+        [26, 32, "#c114", "sip-user"],
+        [26, 32, "#c116", "do-not-return-this"],
+        [26, 32, "#c119", "do-not-return-this"],
+    ]
+
+    info = tks_web._parse_sip_clients(TKS_SIP_CLIENTS_HTML, commands)
+
+    assert info == {
+        "clients": [
+            {
+                "name": "Front desk",
+                "selected": False,
+                "username": None,
+                "password_configured": None,
+            },
+            {
+                "name": "Mobile",
+                "selected": True,
+                "username": "sip-user",
+                "password_configured": True,
+            },
+        ],
+        "security_warning_acknowledged": True,
+    }
+    assert "do-not-return-this" not in repr(info)
+
+
+def test_parse_sip_incoming_calls_preserves_group_assignments() -> None:
+    commands = [
+        [0, 21, "#c124", [TKS_SIP_CALL_GROUP_ONE_HTML]],
+        [0, 21, "#c124", [TKS_SIP_CALL_GROUP_TWO_HTML]],
+        [
+            0,
+            21,
+            "#e19 > td.groupContentInternal > table",
+            [TKS_SIP_CALL_ONE_HTML],
+        ],
+        [
+            0,
+            21,
+            "#e21 > td.groupContentInternal > table",
+            [TKS_SIP_CALL_TWO_HTML],
+        ],
+    ]
+
+    assert tks_web._parse_sip_incoming_calls(commands) == [
+        {
+            "name": "Door station",
+            "calls": [{"name": "Main entrance", "assigned": True}],
+        },
+        {
+            "name": "Internal",
+            "calls": [{"name": "Concierge", "assigned": False}],
+        },
+    ]
 
 
 @respx.mock
@@ -300,6 +375,65 @@ def test_network_info_navigates_to_read_only_panel() -> None:
 
     assert info["network_name"] == "gateway-name"
     assert _parse_data(json_route.calls.last.request.url) == ["link", "l2"]
+
+
+@respx.mock
+def test_sip_clients_launches_assistant_without_sending_configuration() -> None:
+    client = TksWebClient(HOST)
+    client._sid = "test-sid"
+    client._navigation_html = TKS_OVERVIEW_HTML
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["click", "c80"]:
+            return Response(
+                200,
+                json=[
+                    1,
+                    [0, 21, "#content", [TKS_SIP_CLIENTS_HTML]],
+                    [25, 30, "#c104", "#e16"],
+                    [26, 32, "#c108", "Front desk"],
+                    [26, 32, "#c114", "sip-user"],
+                    [26, 32, "#c116", "configured-password"],
+                ],
+            )
+        return Response(
+            200,
+            json=[
+                2,
+                [0, 0, "#incoming", [TKS_SIP_INCOMING_HTML], True],
+                [0, 21, "#c124", [TKS_SIP_CALL_GROUP_ONE_HTML]],
+                [
+                    0,
+                    21,
+                    "#e19 > td.groupContentInternal > table",
+                    [TKS_SIP_CALL_ONE_HTML],
+                ],
+            ],
+        )
+
+    json_route = respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
+
+    info = client.sip_clients()
+
+    assert info["clients"] == [
+        {
+            "name": "Front desk",
+            "selected": True,
+            "username": "sip-user",
+            "password_configured": True,
+        },
+    ]
+    assert info["incoming_calls"] == [
+        {
+            "name": "Door station",
+            "calls": [{"name": "Main entrance", "assigned": True}],
+        },
+    ]
+    assert [_parse_data(call.request.url) for call in json_route.calls] == [
+        ["click", "c80"],
+        ["value", "c110", "e46"],
+    ]
+    assert "configured-password" not in repr(info)
 
 
 @respx.mock

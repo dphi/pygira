@@ -49,6 +49,7 @@ def test_command_support_lists_nested_commands() -> None:
     assert "program export" in result.output
     assert "network get" in result.output
     assert "tks info" in result.output
+    assert "tks sip info" in result.output
 
 
 def test_flat_command_aliases_are_hidden_and_deprecated() -> None:
