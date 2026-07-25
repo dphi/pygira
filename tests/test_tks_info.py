@@ -43,6 +43,9 @@ def test_tks_info_link_lookup_reports_missing_label() -> None:
 
 @respx.mock
 def test_tks_client_navigates_to_device_info_panel() -> None:
+    respx.get(f"http://{HOST}:8080/state?callback=setState").mock(
+        return_value=Response(200, text='setState({"system.state":"0"})'),
+    )
     respx.get(f"http://{HOST}:8080/").mock(return_value=Response(200, text=ROOT_HTML))
 
     def response(request: Request) -> Response:

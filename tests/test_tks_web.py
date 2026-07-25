@@ -21,7 +21,6 @@ from tests.fixtures import (
 )
 
 HOST = "192.168.1.100"
-SUCCESSFUL_LOGIN_RELOADS = 2
 SESSION_BOOTSTRAP_REQUESTS = 2
 
 
@@ -46,6 +45,12 @@ def _ack_response(n: int = 1) -> Response:
 
 def _root_response() -> Response:
     return Response(200, content=TKS_ROOT_HTML.encode())
+
+
+def _mock_state() -> respx.Route:
+    return respx.get(f"http://{HOST}:8080/state?callback=setState").mock(
+        return_value=Response(200, content=b'setState({"system.state":"0"})'),
+    )
 
 
 # ── _find_widget_id ───────────────────────────────────────────────────────────
@@ -86,28 +91,24 @@ def test_parse_device_info_pairs_names_with_values() -> None:
 
 
 @respx.mock
-def test_poll_bootstraps_state_cookie_when_running_app_has_no_session() -> None:
-    root = respx.get(f"http://{HOST}:8080/").mock(
-        side_effect=[Response(200, content=b"<html></html>"), _root_response()],
-    )
-    state = respx.get(f"http://{HOST}:8080/state?callback=setState").mock(
-        return_value=Response(200, content=b'setState({"system.state":"0"})'),
-    )
+def test_poll_bootstraps_state_before_opening_command_session() -> None:
+    state = _mock_state()
+    root = respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     poll = respx.get(f"http://{HOST}:8080/json").mock(return_value=Response(200, json=[1]))
 
     result = TksWebClient(HOST).poll()
 
     assert result == [1]
-    assert len(root.calls) == SESSION_BOOTSTRAP_REQUESTS
+    assert len(root.calls) == 1
     assert state.called
     assert poll.called
+    assert "/state?" in respx.calls[0].request.url
+    assert respx.calls[1].request.url == f"http://{HOST}:8080/"
 
 
 @respx.mock
-def test_poll_uses_sid_cookie_from_state_bootstrap() -> None:
-    root = respx.get(f"http://{HOST}:8080/").mock(
-        return_value=Response(200, content=b"<html></html>"),
-    )
+def test_connect_does_not_mistake_state_cookie_for_command_session() -> None:
+    respx.get(f"http://{HOST}:8080/").mock(return_value=Response(200, content=b"<html></html>"))
     respx.get(f"http://{HOST}:8080/state?callback=setState").mock(
         return_value=Response(
             200,
@@ -115,18 +116,14 @@ def test_poll_uses_sid_cookie_from_state_bootstrap() -> None:
             headers={"Set-Cookie": "SID=cookie-session; Path=/"},
         ),
     )
-    poll = respx.get(f"http://{HOST}:8080/json").mock(return_value=Response(200, json=[1]))
 
-    with patch.object(tks_web.httpx.Client, "_cookie_value", return_value="cookie-session"):
-        result = TksWebClient(HOST).poll()
-
-    assert result == [1]
-    assert len(root.calls) == 1
-    assert "sid=cookie-session" in poll.calls.last.request.url
+    with pytest.raises(RuntimeError, match="could not find session id"):
+        TksWebClient(HOST).poll()
 
 
 @respx.mock
 def test_poll_rejects_non_list_command_response() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     respx.get(f"http://{HOST}:8080/json").mock(return_value=Response(200, json={"bad": 1}))
 
@@ -138,6 +135,7 @@ def test_poll_rejects_non_list_command_response() -> None:
 def test_send_reconnects_once_on_session_closed_signal() -> None:
     """[0, [0, 18]] is CommandManager.sessionClosed (decoded from the live web
     app JS) — the client's fix mirrors the browser's own CommandManager.reloadPage()."""
+    state = _mock_state()
     root = respx.get(f"http://{HOST}:8080/").mock(
         side_effect=[_root_response(), _root_response()],
     )
@@ -148,10 +146,12 @@ def test_send_reconnects_once_on_session_closed_signal() -> None:
 
     assert html == TKS_SYSTEM_HTML
     assert len(root.calls) == SESSION_BOOTSTRAP_REQUESTS
+    assert len(state.calls) == SESSION_BOOTSTRAP_REQUESTS
 
 
 @respx.mock
 def test_send_raises_when_session_closed_repeats() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     respx.get(f"http://{HOST}:8080/json").mock(return_value=Response(200, json=[0, [0, 18]]))
 
@@ -161,6 +161,7 @@ def test_send_raises_when_session_closed_repeats() -> None:
 
 @respx.mock
 def test_device_info_navigates_and_parses_panel() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     respx.get(f"http://{HOST}:8080/json").mock(
         side_effect=lambda request: (
@@ -177,7 +178,32 @@ def test_device_info_navigates_and_parses_panel() -> None:
 
 
 @respx.mock
+def test_device_info_waits_for_panel_from_command_poll() -> None:
+    _mock_state()
+    respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
+    poll_count = {"n": 0}
+
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["reload"]:
+            return _body_response(TKS_OVERVIEW_HTML)
+        if data and data[0] == "link":
+            return _ack_response()
+        poll_count["n"] += 1
+        return Response(200, json=[2, [0, 21, "#content", [TKS_DEVICE_INFO_HTML]]])
+
+    respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
+
+    with patch("pygira.tks_web.time.sleep"):
+        info = TksWebClient(HOST).device_info()
+
+    assert info["Software-Version"] == "05.04.00.08"
+    assert poll_count["n"] == 1
+
+
+@respx.mock
 def test_send_raises_on_invalid_site_id_without_retry() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     json_route = respx.get(f"http://{HOST}:8080/json").mock(
         return_value=Response(200, json=[0, [0, 19]]),
@@ -193,16 +219,20 @@ def test_send_raises_on_invalid_site_id_without_retry() -> None:
 
 
 @respx.mock
-def test_login_succeeds_once_login_page_is_gone() -> None:
+def test_login_waits_for_authenticated_menu_from_command_poll() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
 
     reload_count = {"n": 0}
+    poll_count = {"n": 0}
 
     def json_side_effect(request: Request) -> Response:
         if _is_reload(request.url):
             reload_count["n"] += 1
-            html = TKS_LOGIN_HTML if reload_count["n"] == 1 else TKS_SYSTEM_HTML
-            return _body_response(html)
+            return _body_response(TKS_LOGIN_HTML)
+        if not _parse_data(request.url):
+            poll_count["n"] += 1
+            return Response(200, json=[4, [0, 21, "#menu", [TKS_OVERVIEW_HTML]]])
         return _ack_response()
 
     respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
@@ -211,11 +241,14 @@ def test_login_succeeds_once_login_page_is_gone() -> None:
         client = TksWebClient(HOST)
         client.login("admin", "secret")
 
-    assert reload_count["n"] == SUCCESSFUL_LOGIN_RELOADS
+    assert reload_count["n"] == 1
+    assert poll_count["n"] == 1
+    assert client._navigation_html is not None
 
 
 @respx.mock
-def test_login_raises_when_still_on_login_page() -> None:
+def test_login_raises_when_authenticated_menu_never_arrives() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
     respx.get(f"http://{HOST}:8080/json").mock(
         side_effect=lambda request: (
@@ -233,12 +266,18 @@ def test_login_raises_when_still_on_login_page() -> None:
 
 @respx.mock
 def test_backup_save_downloads_file() -> None:
+    _mock_state()
     respx.get(f"http://{HOST}:8080/").mock(return_value=_root_response())
-    respx.get(f"http://{HOST}:8080/json").mock(
-        side_effect=lambda request: (
-            _body_response(TKS_SYSTEM_HTML) if _is_reload(request.url) else _ack_response()
-        ),
-    )
+
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["reload"]:
+            return _body_response(TKS_OVERVIEW_HTML)
+        if data and data[0] == "link":
+            return Response(200, json=[1, [0, 21, "#content", [TKS_SYSTEM_HTML]]])
+        return _ack_response()
+
+    respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
     respx.get(f"http://{HOST}:8080/files/backup.img").mock(
         return_value=Response(200, content=b"BACKUPDATA"),
     )
@@ -252,11 +291,15 @@ def test_backup_save_downloads_file() -> None:
 
 @respx.mock
 def test_backup_restore_uploads_then_clicks_restore_button() -> None:
-    respx.get(f"http://{HOST}:8080/json").mock(
-        side_effect=lambda request: (
-            _body_response(TKS_SYSTEM_HTML) if _is_reload(request.url) else _ack_response()
-        ),
-    )
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["reload"]:
+            return _body_response(TKS_OVERVIEW_HTML)
+        if data and data[0] == "link":
+            return Response(200, json=[1, [0, 21, "#content", [TKS_SYSTEM_HTML]]])
+        return _ack_response()
+
+    respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
     upload_route = respx.post(f"http://{HOST}:8080/upload?id=backup").mock(
         return_value=Response(200, content=b""),
     )
@@ -271,11 +314,15 @@ def test_backup_restore_uploads_then_clicks_restore_button() -> None:
 
 @respx.mock
 def test_firmware_update_uploads_then_clicks_update_button() -> None:
-    respx.get(f"http://{HOST}:8080/json").mock(
-        side_effect=lambda request: (
-            _body_response(TKS_SYSTEM_HTML) if _is_reload(request.url) else _ack_response()
-        ),
-    )
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["reload"]:
+            return _body_response(TKS_OVERVIEW_HTML)
+        if data and data[0] == "link":
+            return Response(200, json=[1, [0, 21, "#content", [TKS_SYSTEM_HTML]]])
+        return _ack_response()
+
+    respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
     upload_route = respx.post(f"http://{HOST}:8080/update").mock(
         return_value=Response(200, content=b""),
     )

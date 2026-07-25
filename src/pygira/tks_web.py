@@ -4,7 +4,7 @@ This is the on-demand web app (`com_gira_tkipgw`), not the always-on port 80
 bootstrap daemon (see config_service.activate_tks_webinterface for that).
 
 Protocol, confirmed via live HAR capture (2026-07-04):
-  1. GET /            -> body contains decodeCommand(0,6,"<sid>",0)
+  1. GET /state then GET / -> body contains decodeCommand(0,6,"<sid>",0)
   2. GET /json?sid=<sid>&rid=0&data=["reload"] -> full page as a command
      array; one command is [0, 0, "body", [<html>], true]
   3. GET /json?sid=<sid>&rid=0&data=["click","<id>"] or
@@ -25,6 +25,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from lxml import html as lxml_html
@@ -49,6 +50,7 @@ _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
 # (stops polling, shows "Tab closed...").
 _SESSION_CLOSED = (0, 18)
 _INVALID_SITE_ID = (0, 19)
+_POLL_INTERVAL_SECONDS = 0.5
 
 
 def _scan_session_signal(commands: list[Any]) -> bool:
@@ -137,8 +139,30 @@ def _collect_html_fragments(commands: list[Any]) -> str:
     return "".join(fragments)
 
 
+def _contains_link(html_blob: str, label: str) -> bool:
+    if not html_blob:
+        return False
+    try:
+        _find_link_id(html_blob, label)
+    except ProtocolError:
+        return False
+    return True
+
+
+def _contains_widget(html_blob: str, css_class: str) -> bool:
+    if not html_blob:
+        return False
+    try:
+        _find_widget_id(html_blob, css_class)
+    except ProtocolError:
+        return False
+    return True
+
+
 def _parse_device_info(html_blob: str) -> dict[str, str]:
     """Parse Geräteinfos name/value rows out of concatenated Administration HTML."""
+    if not html_blob:
+        return {}
     tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
     names = cast("list[HtmlElement]", tree.xpath('//*[@class="aDICECName"]//span'))
     values = cast("list[HtmlElement]", tree.xpath('//*[@class="aDICECValue"]//span'))
@@ -169,25 +193,22 @@ class TksWebClient:
         """Create a client; call login() before any other method."""
         self._client = httpx.Client(base_url=f"http://{host}:8080", timeout=timeout)
         self._sid: str | None = None
+        self._navigation_html: str | None = None
 
     def _connect(self) -> None:
+        # The browser always establishes bootstrap state before opening the
+        # root page. In particular, the SID cookie returned by /state is not
+        # itself a command-loop session id.
+        state = self._client.get("/state", params={"callback": "setState"})
+        state.raise_for_status()
         resp = self._client.get("/")
+        resp.raise_for_status()
         match = _SID_RE.search(resp.content.decode(errors="replace"))
-        if not match:
-            # A running application can require the browser's state bootstrap
-            # cookie before it issues a new command-loop session.
-            state = self._client.get("/state", params={"callback": "setState"})
-            state.raise_for_status()
-            cookie_sid = self._client._cookie_value("SID")
-            if cookie_sid:
-                self._sid = cookie_sid
-                return
-            resp = self._client.get("/")
-            match = _SID_RE.search(resp.content.decode(errors="replace"))
         if not match:
             msg = "could not find session id in TKS-IP root page"
             raise ProtocolError(_PROTOCOL, "connect", "missing-session", msg)
         self._sid = match.group(1)
+        self._navigation_html = None
 
     def _send(self, data: list[object], *, _reconnected: bool = False) -> list[Any]:
         if self._sid is None:
@@ -225,6 +246,26 @@ class TksWebClient:
     def reload(self) -> str:
         """Send a reload and return the main content HTML."""
         return self._extract_html(self._send(["reload"]))
+
+    def _wait_for_html(
+        self,
+        commands: list[Any],
+        predicate: Callable[[str], bool],
+        *,
+        timeout: float,
+        operation: str,
+    ) -> str:
+        """Accumulate HTML from a send and later polls until a page is complete."""
+        html_blob = _collect_html_fragments(commands)
+        deadline = time.monotonic() + timeout
+        while not predicate(html_blob):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                msg = f"timed out waiting for TKS-IP {operation}"
+                raise ProtocolError(_PROTOCOL, operation, "timeout", msg)
+            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+            html_blob += _collect_html_fragments(self.poll())
+        return html_blob
 
     def poll(self, *, _reconnected: bool = False) -> list[Any]:
         """Poll the command loop, keeping the temporary web session alive."""
@@ -270,36 +311,58 @@ class TksWebClient:
         user_id = _find_widget_id(html, "lLDCName")
         pass_id = _find_widget_id(html, "lLDCPassword")
         self._send(["value", user_id, username, True, False, False])
-        self._send(["value", pass_id, password, True, True, False])
+        commands = self._send(["value", pass_id, password, True, True, False])
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            time.sleep(1.0)
-            html = self.reload()
-            try:
-                _find_widget_id(html, "lLLoginButton")
-            except ProtocolError:
-                return  # login page no longer shown -> logged in
-        msg = "TKS-IP login failed or timed out — check tks_ip credentials"
-        command = "TKS-IP login"
-        response = {"id": "timeout", "error": msg}
-        raise AuthenticationError(command, response)
+        try:
+            self._navigation_html = self._wait_for_html(
+                commands,
+                lambda page: _contains_link(page, "Geräteinfos"),
+                timeout=timeout,
+                operation="authenticated menu",
+            )
+        except ProtocolError as exc:
+            msg = "TKS-IP login failed or timed out — check tks_ip credentials"
+            command = "TKS-IP login"
+            response = {"id": "timeout", "error": msg}
+            raise AuthenticationError(command, response) from exc
 
-    def device_info(self) -> dict[str, str]:
+    def _navigate(
+        self,
+        label: str,
+        predicate: Callable[[str], bool],
+        *,
+        timeout: float,
+    ) -> str:
+        menu_html = self._navigation_html or self.reload()
+        link_id = _find_link_id(menu_html, label)
+        return self._wait_for_html(
+            self._send(["link", link_id]),
+            predicate,
+            timeout=timeout,
+            operation=label,
+        )
+
+    def device_info(self, *, timeout: float = 10.0) -> dict[str, str]:
         """Read the read-only device-info panel from the Administration page.
 
         Navigates via the "Geräteinfos" menu link rather than assuming the
         panel lives on the post-login landing page — reaching it requires
         this explicit navigation (see research/tks-ip-v1/api-surface.md).
         """
-        html = self.reload()
-        link_id = _find_link_id(html, "Geräteinfos")
-        commands = self._send(["link", link_id])
-        return _parse_device_info(_collect_html_fragments(commands))
+        html = self._navigate(
+            "Geräteinfos",
+            lambda page: bool(_parse_device_info(page)),
+            timeout=timeout,
+        )
+        return _parse_device_info(html)
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""
-        html = self.reload()
+        html = self._navigate(
+            "Sicherung / Wiederherstellung",
+            lambda page: _contains_widget(page, "aBSaveButton"),
+            timeout=timeout,
+        )
         self.click(_find_widget_id(html, "aBSaveButton"))
 
         deadline = time.monotonic() + timeout
@@ -316,12 +379,20 @@ class TksWebClient:
 
     def backup_restore(self, data: bytes, filename: str = "backup.img") -> None:
         """Upload a backup file and trigger restoring it."""
+        html = self._navigate(
+            "Sicherung / Wiederherstellung",
+            lambda page: _contains_widget(page, "aBRestoreButton"),
+            timeout=30.0,
+        )
         self.upload("/upload?id=backup", filename, data)
-        html = self.reload()
         self.click(_find_widget_id(html, "aBRestoreButton"))
 
     def firmware_update(self, data: bytes, filename: str = "firmware.bin") -> None:
         """Upload a firmware image and trigger applying it."""
+        html = self._navigate(
+            "Update",
+            lambda page: _contains_widget(page, "aUSUpdateButton"),
+            timeout=30.0,
+        )
         self.upload("/update", filename, data)
-        html = self.reload()
         self.click(_find_widget_id(html, "aUSUpdateButton"))
