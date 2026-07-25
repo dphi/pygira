@@ -17,18 +17,12 @@ from pygira.config_service import (
     TksRuntimeDiagnostics,
     TksWebInterfaceActivation,
 )
-from pygira.devices.g1 import PROFILE as G1_PROFILE
-from pygira.exceptions import OperationTimeoutError, TransportError
+from pygira.exceptions import OperationTimeoutError
 from pygira.gds import GdsClient
 from pygira.models import WeatherStation
 
 HOST = "192.0.2.10"
 CREDS = ["--ip", HOST, "--username", "device", "--password", "secret"]
-EXPECTED_ACTIVATION_ATTEMPTS = 2
-
-
-def _login(profile: object = G1_PROFILE) -> tuple[object, str, str, str]:
-    return profile, HOST, "device", "secret"
 
 
 def _run_gds(
@@ -53,14 +47,17 @@ def _log_archive() -> bytes:
 
 def test_activate_tks_web_command() -> None:
     activation = TksWebInterfaceActivation("0", f"http://{HOST}:8080/", 1.25)
+    device = MagicMock()
+    device.activate_web.return_value = activation
     with (
         patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
-        patch("pygira.commands.maintenance.cs.activate_tks_webinterface", return_value=activation),
+        patch("pygira.commands.maintenance.TksIp", return_value=device),
     ):
         result = CliRunner().invoke(main, ["activate-tks-web", "--tks-ip", HOST])
 
     assert result.exit_code == 0, result.output
     assert "active" in result.output
+    device.activate_web.assert_called_once_with(poll_interval=1.0)
 
 
 @pytest.mark.parametrize(
@@ -120,26 +117,25 @@ def test_activate_tks_web_command() -> None:
     ],
 )
 def test_tks_status_command_branches(status: TksDeviceStatus, expected: str) -> None:
+    device = MagicMock()
+    device.status.return_value = status
     with (
         patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
         patch("pygira.commands.maintenance.find_tks_aes_key", return_value=None),
-        patch(
-            "pygira.commands.maintenance.cs.get_tks_device_status",
-            return_value=status,
-        ) as inspect_status,
+        patch("pygira.commands.maintenance.TksIp", return_value=device) as factory,
     ):
         result = CliRunner().invoke(main, ["tks-status", "--tks-ip", HOST])
 
     assert result.exit_code == 0, result.output
     assert expected in result.output
     assert "Port 8080 was not contacted" in result.output
-    inspect_status.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
+    factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
+    device.status.assert_called_once()
 
 
 def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
     client = MagicMock()
     client.backup_save.return_value = b"backup"
-    login = (HOST, "admin", "secret")
     backup_output = tmp_path / "saved.img"
     backup_input = tmp_path / "input.img"
     firmware = tmp_path / "firmware.bin"
@@ -147,9 +143,7 @@ def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
     firmware.write_bytes(b"firmware")
 
     with (
-        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
-        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
-        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+        patch("pygira.commands.maintenance._tks_device", return_value=(HOST, client)),
     ):
         runner = CliRunner()
         results = [
@@ -170,77 +164,39 @@ def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
     assert all(result.exit_code == 0 for result in results)
     assert backup_output.read_bytes() == b"backup"
     client.backup_restore.assert_called_once_with(b"restore", "input.img")
-    client.firmware_update.assert_called_once_with(b"firmware", "firmware.bin")
+    client.firmware_update.assert_called_once_with(firmware)
 
 
 def test_tks_info_command() -> None:
     client = MagicMock()
-    client.device_info.return_value = {"Software-Version": "05.04.00.08"}
-    login = (HOST, "admin", "secret")
+    client.raw_device_info.return_value = {"Software-Version": "05.04.00.08"}
 
     with (
-        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
-        patch(
-            "pygira.commands.maintenance.cs.activate_tks_webinterface",
-        ) as activate_web,
-        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+        patch("pygira.commands.maintenance._tks_device", return_value=(HOST, client)),
     ):
         result = CliRunner().invoke(main, ["tks-info"])
 
     assert result.exit_code == 0, result.output
     assert "Software-Version" in result.output
     assert "05.04.00.08" in result.output
-    activate_web.assert_called_once_with(HOST)
-    client.login.assert_called_once_with("admin", "secret")
-
-
-def test_tks_info_reactivates_after_transient_login_transport_failure() -> None:
-    first_client = MagicMock()
-    first_client.login.side_effect = TransportError("remote end closed connection")
-    second_client = MagicMock()
-    second_client.device_info.return_value = {"Software-Version": "05.04.00.08"}
-    login = (HOST, "admin", "secret")
-
-    with (
-        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
-        patch(
-            "pygira.commands.maintenance.cs.activate_tks_webinterface",
-        ) as activate_web,
-        patch(
-            "pygira.commands.maintenance.TksWebClient",
-            side_effect=[first_client, second_client],
-        ),
-    ):
-        result = CliRunner().invoke(main, ["tks", "info"])
-
-    assert result.exit_code == 0, result.output
-    assert "05.04.00.08" in result.output
-    assert activate_web.call_count == EXPECTED_ACTIVATION_ATTEMPTS
-    first_client.login.assert_called_once_with("admin", "secret")
-    second_client.login.assert_called_once_with("admin", "secret")
+    client.raw_device_info.assert_called_once()
 
 
 def test_tks_info_reports_web_interface_activation_failure() -> None:
-    login = (HOST, "admin", "secret")
-    client_type = MagicMock()
     failure = OperationTimeoutError(
         "TKS-IP web interface did not start: <urlopen error [Errno 61] Connection refused>",
     )
+    client = MagicMock()
+    client.raw_device_info.side_effect = failure
 
     with (
-        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
-        patch(
-            "pygira.commands.maintenance.cs.activate_tks_webinterface",
-            side_effect=failure,
-        ),
-        patch("pygira.commands.maintenance.TksWebClient", client_type),
+        patch("pygira.commands.maintenance._tks_device", return_value=(HOST, client)),
     ):
         result = CliRunner().invoke(main, ["tks", "info"])
 
     assert result.exit_code == 1
     assert "Error: TKS-IP web interface did not start" in result.output
     assert "Connection refused" in result.output
-    client_type.assert_not_called()
 
 
 def test_tks_sip_info_command_never_prints_password_values() -> None:
@@ -262,12 +218,9 @@ def test_tks_sip_info_command_never_prints_password_values() -> None:
         ],
         "security_warning_acknowledged": True,
     }
-    login = (HOST, "admin", "secret")
 
     with (
-        patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
-        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
-        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+        patch("pygira.commands.maintenance._tks_device", return_value=(HOST, client)),
     ):
         result = CliRunner().invoke(main, ["tks", "sip", "info"])
 
@@ -301,8 +254,8 @@ password = "other-secret"
     output = tmp_path / "backup.img"
 
     with (
-        patch("pygira.commands.maintenance.cs.activate_tks_webinterface"),
-        patch("pygira.commands.maintenance.TksWebClient", return_value=client),
+        patch("pygira.commands.maintenance.TksIp", return_value=client) as factory,
+        patch("pygira.commands.maintenance.find_tks_aes_key", return_value=None),
     ):
         result = CliRunner().invoke(
             main,
@@ -320,7 +273,12 @@ password = "other-secret"
         )
 
     assert result.exit_code == 0, result.output
-    client.login.assert_called_once_with("configured-admin", "configured-secret")
+    factory.assert_called_once_with(
+        HOST,
+        "configured-admin",
+        "configured-secret",
+        aes_key=None,
+    )
     assert output.read_bytes() == b"backup"
 
 
@@ -333,10 +291,7 @@ def test_tks_pull_logs_command(tmp_path: Path) -> None:
             "pygira.commands.maintenance.resolve_tks_aes_key",
             return_value="0123456789abcdefghijklmn",
         ),
-        patch(
-            "pygira.commands.maintenance.cs.download_tks_logfile",
-            return_value=b"log data",
-        ) as download,
+        patch("pygira.commands.maintenance._tks_logfile", return_value=b"log data") as download,
     ):
         result = CliRunner().invoke(
             main,
@@ -345,7 +300,7 @@ def test_tks_pull_logs_command(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert output.read_bytes() == b"log data"
-    download.assert_called_once_with(HOST, aes_key="0123456789abcdefghijklmn")
+    download.assert_called_once_with(HOST, "0123456789abcdefghijklmn")
 
 
 def test_tks_tail_logs_command_prints_new_lines_only() -> None:
@@ -359,7 +314,7 @@ def test_tks_tail_logs_command_prints_new_lines_only() -> None:
             return_value="0123456789abcdefghijklmn",
         ),
         patch(
-            "pygira.commands.maintenance.cs.download_tks_logfile",
+            "pygira.commands.maintenance._tks_logfile",
             side_effect=[first, second, KeyboardInterrupt],
         ),
         patch("pygira.commands.maintenance.time.sleep"),
@@ -373,10 +328,15 @@ def test_tks_tail_logs_command_prints_new_lines_only() -> None:
 
 def test_set_weather_and_g1_factory_reset() -> None:
     station = WeatherStation(station_id="station", label="Test")
+    device = MagicMock()
     with (
-        patch("pygira.commands.maintenance.resolve_login", return_value=_login()),
+        patch(
+            "pygira.commands.maintenance.resolve_login",
+            return_value=(MagicMock(), HOST, "device", "secret"),
+        ),
         patch("pygira.commands.maintenance.weather_mod.find_station", return_value=station),
         patch("pygira.commands.maintenance.run_gds", side_effect=_run_gds),
+        patch("pygira.commands.maintenance._device_client", return_value=device),
     ):
         runner = CliRunner()
         weather = runner.invoke(main, ["set-weather", *CREDS, "--zip", "10115"])
@@ -384,6 +344,7 @@ def test_set_weather_and_g1_factory_reset() -> None:
 
     assert weather.exit_code == 0, weather.output
     assert reset.exit_code == 0, reset.output
+    device.factory_reset.assert_called_once_with()
 
 
 def test_pull_logs_uses_device_facade(tmp_path: Path) -> None:
@@ -402,12 +363,10 @@ def test_pull_logs_uses_device_facade(tmp_path: Path) -> None:
 
 
 def test_tail_logs_stops_cleanly_on_keyboard_interrupt() -> None:
+    device = MagicMock()
+    device.logfile.side_effect = [_log_archive(), KeyboardInterrupt()]
     with (
-        patch("pygira.commands.maintenance.resolve_login", return_value=_login()),
-        patch(
-            "pygira.commands.maintenance._fetch_tail_logs",
-            side_effect=[_log_archive(), KeyboardInterrupt()],
-        ),
+        patch("pygira.commands.maintenance._device_client", return_value=device),
         patch("pygira.commands.maintenance.time.sleep"),
     ):
         result = CliRunner().invoke(main, ["--device", "g1", "logs", "tail", *CREDS, "-n", "1"])

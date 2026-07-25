@@ -32,6 +32,20 @@ def _device_client() -> MagicMock:
             ],
         },
     }
+    device.network_info.return_value = {
+        "dhcp": True,
+        "ip_address": "192.0.2.10",
+        "subnet_mask": "255.255.255.0",
+        "default_gateway": "192.0.2.1",
+        "primary_dns": "192.0.2.53",
+        "secondary_dns": None,
+    }
+    device.ntp_info.return_value = {
+        "enabled": True,
+        "server": "pool.ntp.org",
+        "interval_minutes": "10",
+        "timezone": "Europe/Berlin",
+    }
     return device
 
 
@@ -167,3 +181,21 @@ def test_set_ip_requires_at_least_one_change() -> None:
 
     assert result.exit_code == USAGE_ERROR_EXIT_CODE
     assert "No network flags" in result.output
+
+
+def test_tks_ip_uses_common_read_only_device_commands() -> None:
+    client = _device_client()
+    runner = CliRunner()
+    with patch("pygira.commands.device._device_client", return_value=client):
+        results = [
+            runner.invoke(main, ["device", "info"]),
+            runner.invoke(main, ["device", "diagnostics"]),
+            runner.invoke(main, ["network", "get"]),
+            runner.invoke(main, ["ntp", "get"]),
+        ]
+
+    assert all(result.exit_code == 0 for result in results)
+    client.device_info.assert_called()
+    client.diagnostic_page.assert_called_once_with(completely=True)
+    client.network_info.assert_called_once()
+    client.ntp_info.assert_called_once()

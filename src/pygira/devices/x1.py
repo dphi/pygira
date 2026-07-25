@@ -55,6 +55,28 @@ class X1:
         """Return normalized, typed device information."""
         return self.api.get_device_info_model()
 
+    def network_info(self) -> dict[str, object]:
+        """Return normalized network configuration."""
+        data = self.device_info(long=True).get("data", {})
+        return {
+            "dhcp": data.get("Dhcp"),
+            "ip_address": data.get("IpAddress"),
+            "subnet_mask": data.get("SubnetMask"),
+            "default_gateway": data.get("DefaultGateway"),
+            "primary_dns": data.get("NameServer"),
+            "secondary_dns": data.get("SecondaryDns", data.get("SecondaryDNS")),
+        }
+
+    def ntp_info(self) -> dict[str, object]:
+        """Return normalized NTP configuration."""
+        data = self.device_info(long=True).get("data", {})
+        return {
+            "enabled": data.get("Ntp"),
+            "server": data.get("NtpServerAddress"),
+            "interval_minutes": data.get("NtpInterval"),
+            "timezone": data.get("TimeZoneID"),
+        }
+
     def diagnostic_page(self, *, completely: bool = True) -> dict:
         """Free-text diagnostic blob: running processes, system/NTP/IP info."""
         return self.api.get_diagnostic_page(completely=completely)

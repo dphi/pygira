@@ -14,7 +14,7 @@ def test_root_help_prefixes_commands_with_supported_devices() -> None:
     result = CliRunner().invoke(main, ["--help"])
 
     assert result.exit_code == 0, result.output
-    assert "[G1/X1] Check and install device firmware" in result.output
+    assert "[G1/X1/TKS-IP] Check and install device firmware" in result.output
     assert "[G1] Configure the G1 weather display" in result.output
     assert "[G1/X1] Read or change device logging verbosity" in result.output
     assert "[G1/TKS-IP] Manage G1 door communication" in result.output
@@ -38,6 +38,26 @@ def test_tks_command_help_uses_common_ip_spelling() -> None:
     assert result.exit_code == 0, result.output
     assert "--ip, --tks-ip TEXT" in result.output
     assert "--name TEXT" in result.output
+
+
+def test_common_read_commands_advertise_tks_ip_support() -> None:
+    runner = CliRunner()
+
+    for path in (
+        ["device", "info", "--help"],
+        ["device", "diagnostics", "--help"],
+        ["network", "get", "--help"],
+        ["ntp", "get", "--help"],
+        ["firmware", "upgrade", "--help"],
+    ):
+        result = runner.invoke(main, path)
+        assert result.exit_code == 0, result.output
+        assert "Supported devices: G1, X1, TKS-IP." in result.output
+
+    for path in (["network", "set", "--help"], ["ntp", "set", "--help"]):
+        result = runner.invoke(main, path)
+        assert result.exit_code == 0, result.output
+        assert "Supported devices: G1, X1." in result.output
 
 
 def test_command_support_lists_nested_commands() -> None:

@@ -81,7 +81,7 @@ def common_options(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
     decorated = click.option(
         "--username",
         default=None,
-        help="Device username (default: device for G1 and X1)",
+        help="Device username (default: device for G1/X1, admin for TKS-IP)",
     )(
         click.option(
             "--password",

@@ -31,7 +31,7 @@ def check_update(
     "firmware_file",
     default=None,
     type=click.Path(exists=True),
-    help="Local firmware ZIP file",
+    help="Local firmware image (ZIP for G1/X1, BIN for TKS-IP)",
 )
 @click.option("--online", is_flag=True, help="Trigger online update from Gira download server")
 @click.option("--no-wait", is_flag=True, help="Return immediately without polling progress")

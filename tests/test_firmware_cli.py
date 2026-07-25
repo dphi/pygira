@@ -53,6 +53,21 @@ def test_local_upgrade_uploads_and_can_return_without_waiting(tmp_path: Path) ->
     client.wait_for_completion.assert_not_called()
 
 
+def test_local_upgrade_handles_devices_without_progress_api(tmp_path: Path) -> None:
+    firmware = tmp_path / "firmware.bin"
+    firmware.write_bytes(b"firmware")
+    client = MagicMock()
+    client.can_wait_for_upgrade = False
+    client.install_firmware.return_value = {"started": True}
+    with patch("pygira.commands.firmware._device", return_value=client):
+        result = CliRunner().invoke(main, ["firmware", "upgrade", "--file", str(firmware)])
+
+    assert result.exit_code == 0, result.output
+    assert "does not expose progress" in result.output
+    client.install_firmware.assert_called_once_with(firmware)
+    client.wait_for_completion.assert_not_called()
+
+
 def test_commissioning_and_ssh_commands_delegate_to_client() -> None:
     runner = CliRunner()
     client = MagicMock()

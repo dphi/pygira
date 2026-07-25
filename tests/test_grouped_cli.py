@@ -16,14 +16,12 @@ from pygira.core.types import DeviceType
 
 def test_network_get_prints_normalized_keys() -> None:
     device = MagicMock()
-    device.device_info.return_value = {
-        "data": {
-            "Dhcp": True,
-            "IpAddress": "192.0.2.10",
-            "SubnetMask": "255.255.255.0",
-            "DefaultGateway": "192.0.2.1",
-            "NameServer": "192.0.2.53",
-        },
+    device.network_info.return_value = {
+        "dhcp": True,
+        "ip_address": "192.0.2.10",
+        "subnet_mask": "255.255.255.0",
+        "default_gateway": "192.0.2.1",
+        "nameserver": "192.0.2.53",
     }
 
     with patch("pygira.commands.device._device_client", return_value=device):
@@ -61,10 +59,7 @@ def test_logs_pull_uses_same_command_for_tks_ip(tmp_path: Path) -> None:
         ),
         patch("pygira.commands.maintenance.resolve_tks_ip", return_value="192.0.2.20"),
         patch("pygira.commands.maintenance.resolve_tks_aes_key", return_value="key"),
-        patch(
-            "pygira.commands.maintenance.cs.download_tks_logfile",
-            return_value=b"tks logs",
-        ),
+        patch("pygira.commands.maintenance._tks_logfile", return_value=b"tks logs"),
     ):
         result = CliRunner().invoke(main, ["logs", "pull", "--output", str(output)])
 
@@ -100,7 +95,7 @@ password = "web-secret"
             ),
         ),
         patch("pygira.commands.maintenance.resolve_login") as resolve_login,
-        patch("pygira.commands.maintenance.cs.download_tks_logfile", download),
+        patch("pygira.commands.maintenance._tks_logfile", download),
         patch("pygira.commands.maintenance.time.sleep"),
     ):
         result = CliRunner().invoke(
@@ -115,7 +110,7 @@ password = "web-secret"
     assert "TKS-IP logfile AES key" in result.output
     assert "password" not in result.output.casefold()
     resolve_login.assert_not_called()
-    download.assert_called_with("192.0.2.20", aes_key="0123456789abcdefghijklmn")
+    download.assert_called_with("192.0.2.20", "0123456789abcdefghijklmn")
 
 
 def test_logs_tail_uses_aes_key_configured_for_prompted_tks_host(tmp_path: Path) -> None:
@@ -148,7 +143,7 @@ aes_key = "other-key"
             ),
         ),
         patch("pygira.commands.maintenance.resolve_login") as resolve_login,
-        patch("pygira.commands.maintenance.cs.download_tks_logfile", download),
+        patch("pygira.commands.maintenance._tks_logfile", download),
         patch("pygira.commands.maintenance.time.sleep"),
     ):
         result = CliRunner().invoke(
@@ -160,4 +155,4 @@ aes_key = "other-key"
     assert result.exit_code == 0, result.output
     assert "TKS-IP logfile AES key" not in result.output
     resolve_login.assert_not_called()
-    download.assert_called_with("192.0.2.20", aes_key="configured-key")
+    download.assert_called_with("192.0.2.20", "configured-key")

@@ -15,7 +15,6 @@ from typing import ParamSpec, TypeVar, cast
 import click
 from rich.table import Table
 
-from pygira import api as api_mod
 from pygira import config_service as cs
 from pygira import weather as weather_mod
 from pygira.commands._target import resolve_device as _device_client
@@ -34,11 +33,11 @@ from pygira.context import (
 from pygira.core.detect import detect_device_type
 from pygira.core.types import DeviceType
 from pygira.devices.base import DeviceProfile
-from pygira.exceptions import TransportError, UnsupportedCapabilityError
+from pygira.devices.tks_ip import TksIp
+from pygira.exceptions import UnsupportedCapabilityError
 from pygira.gds import GdsClient, run_gds
 from pygira.options import common_options, selection_options
 from pygira.prompting import TypedAddress
-from pygira.tks_web import TksWebClient
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -47,7 +46,6 @@ NORMAL_SYSLOG_SEVERITY = 4
 SECONDS_PER_MINUTE = 60
 MAX_CLOCK_SKEW_SECONDS = 120
 MIN_FREE_MEMORY_KIB = 4096
-TKS_WEB_LOGIN_ATTEMPTS = 2
 
 
 def _tks_ip_option(f: ClickCommand[P, R]) -> ClickCommand[P, R]:
@@ -91,21 +89,19 @@ def _require_x1(profile: DeviceProfile, command_name: str) -> None:
         raise UnsupportedCapabilityError(msg)
 
 
-def _login_tks_web(host: str, username: str, password: str) -> TksWebClient:
-    """Start the on-demand web app and return an authenticated session."""
-    last_error: TransportError | None = None
-    with console.status("[bold]Opening TKS-IP web interface…[/bold]"):
-        for _ in range(TKS_WEB_LOGIN_ATTEMPTS):
-            cs.activate_tks_webinterface(host)
-            client = TksWebClient(host, persist_session=True)
-            try:
-                client.login(username, password)
-            except TransportError as exc:
-                last_error = exc
-            else:
-                return client
-    assert last_error is not None
-    raise last_error
+def _tks_device(
+    tks_ip: str | None,
+    tks_user: str | None,
+    tks_pass: str | None,
+) -> tuple[str, TksIp]:
+    """Resolve and construct the public TKS-IP facade."""
+    host, username, password = resolve_tks_login(tks_ip, tks_user, tks_pass)
+    return host, TksIp(
+        host,
+        username,
+        password,
+        aes_key=find_tks_aes_key(None, host=host),
+    )
 
 
 def _check_status(ok: bool, *, warning: bool = False) -> str:
@@ -339,11 +335,7 @@ def _register_tks_web(main: click.Group) -> None:
     def activate_tks_web(tks_ip: str | None, timeout: float, poll_interval: float) -> None:
         """Start the TKS-IP web interface on port 8080."""
         host = resolve_tks_ip(tks_ip)
-        result = cs.activate_tks_webinterface(
-            host,
-            timeout=timeout,
-            poll_interval=poll_interval,
-        )
+        result = TksIp(host, timeout=timeout).activate_web(poll_interval=poll_interval)
         console.print(
             f"[green]TKS-IP web interface active:[/green] {result.url} "
             f"(state={result.state}, {result.elapsed_seconds:.1f}s)",
@@ -369,11 +361,11 @@ def _register_tks_web(main: click.Group) -> None:
         """Inspect TKS-IP health without contacting the port-8080 web app."""
         host = resolve_tks_ip(tks_ip)
         with console.status("[bold]Inspecting TKS-IP services…[/bold]"):
-            status = cs.get_tks_device_status(
+            status = TksIp(
                 host,
                 timeout=timeout,
                 aes_key=find_tks_aes_key(aes_key, host=host),
-            )
+            ).status()
         _print_tks_device_status(host, status)
 
 
@@ -392,9 +384,8 @@ def _register_tks_backup_save(main: click.Group) -> None:
         output: str | None,
     ) -> None:
         """Download a configuration backup from the TKS-IP gateway."""
-        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = _login_tks_web(host, user, pw)
-        data = client.backup_save()
+        host, device = _tks_device(tks_ip, tks_user, tks_pass)
+        data = device.backup_save()
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         out = output or f"tks-backup-{host.replace('.', '-')}-{ts}.img"
         Path(out).write_bytes(data)
@@ -419,9 +410,8 @@ def _register_tks_backup_restore(main: click.Group) -> None:
                 "This will overwrite the TKS-IP gateway's current configuration. Continue?",
                 abort=True,
             )
-        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = _login_tks_web(host, user, pw)
-        client.backup_restore(Path(backup_file).read_bytes(), Path(backup_file).name)
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        device.backup_restore(Path(backup_file).read_bytes(), Path(backup_file).name)
         console.print("[green]Restore triggered.[/green]")
 
 
@@ -443,9 +433,8 @@ def _register_tks_firmware_update(main: click.Group) -> None:
                 "This will update the TKS-IP gateway's firmware. Continue?",
                 abort=True,
             )
-        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = _login_tks_web(host, user, pw)
-        client.firmware_update(Path(firmware_file).read_bytes(), Path(firmware_file).name)
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        device.firmware_update(Path(firmware_file))
         console.print("[green]Firmware update triggered.[/green]")
 
 
@@ -454,9 +443,8 @@ def _register_tks_device_info(main: click.Group) -> None:
     @_tks_login_options
     def tks_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
         """Show read-only device info from the TKS-IP gateway's Administration page."""
-        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = _login_tks_web(host, user, pw)
-        for name, value in client.device_info().items():
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        for name, value in device.raw_device_info().items():
             console.print(f"[bold]{name}:[/bold] {value}")
 
 
@@ -465,9 +453,8 @@ def _register_tks_sip_info(main: click.Group) -> None:
     @_tks_login_options
     def tks_sip_info(tks_ip: str | None, tks_user: str, tks_pass: str) -> None:
         """Show configured SIP clients and incoming-call assignments."""
-        host, user, pw = resolve_tks_login(tks_ip, tks_user, tks_pass)
-        client = _login_tks_web(host, user, pw)
-        info = client.sip_clients()
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        info = device.sip_clients()
 
         clients = cast("list[dict[str, object]]", info["clients"])
         client_table = Table(title="SIP clients")
@@ -561,22 +548,6 @@ def _register_weather(main: click.Group) -> None:
         console.print("[green]Weather station configured.[/green]")
 
 
-def _api_client(
-    profile: DeviceProfile,
-    ip: str,
-    username: str,
-    password: str,
-    timeout: float,
-) -> api_mod.ApiClient:
-    return api_mod.ApiClient(
-        ip,
-        username,
-        password,
-        api_prefix=profile.api_prefix,
-        timeout=timeout,
-    )
-
-
 def _register_basic_maintenance(main: click.Group) -> None:
     @main.command()
     @common_options
@@ -587,8 +558,7 @@ def _register_basic_maintenance(main: click.Group) -> None:
         timeout: float,
     ) -> None:
         """Restart the device."""
-        profile, ip, username, password = resolve_login(ip, username, password)
-        _api_client(profile, ip, username, password, timeout).reboot()
+        _device_client(ip, password, username, timeout).reboot()
         console.print("[green]Restart command sent.[/green]")
 
     @main.command("factory-reset")
@@ -605,16 +575,13 @@ def _register_basic_maintenance(main: click.Group) -> None:
         if not confirm:
             click.confirm("This will erase all configuration. Continue?", abort=True)
 
-        profile, ip, username, password = resolve_login(ip, username, password)
-        if profile.device_type == DeviceType.X1:
-            _api_client(profile, ip, username, password, timeout).factory_reset()
-        else:
-
-            async def _do(client: GdsClient) -> None:
-                await client.factory_reset()
-
-            run_gds(ip, username, password, _do, timeout=timeout)
+        _device_client(ip, password, username, timeout).factory_reset()
         console.print("[green]Factory reset command sent.[/green]")
+
+
+def _tks_logfile(host: str, aes_key: str | bytes) -> bytes:
+    """Download one TKS-IP logfile through the public device facade."""
+    return TksIp(host, aes_key=aes_key).logfile()
 
 
 def _register_pull_logs(main: click.Group) -> None:
@@ -638,10 +605,7 @@ def _register_pull_logs(main: click.Group) -> None:
         target = _log_target(ip, username, password)
         if target.device_type == DeviceType.TKS_IP:
             host = resolve_tks_ip(target.host or ip)
-            data = cs.download_tks_logfile(
-                host,
-                aes_key=resolve_tks_aes_key(aes_key, host=host),
-            )
+            data = _tks_logfile(host, resolve_tks_aes_key(aes_key, host=host))
             output = output or "tks-logs.dat"
         else:
             data = _device_client(target.host or ip, password, username, timeout).logfile()
@@ -681,22 +645,6 @@ def _log_target(
         type=click.Choice(["g1", "x1", "tks-ip"], case_sensitive=False),
     )
     return _LogTarget(DeviceType(selected_type), host)
-
-
-def _fetch_tail_logs(
-    profile: DeviceProfile,
-    ip: str,
-    username: str,
-    password: str,
-    timeout: float,
-) -> bytes:
-    return api_mod.ApiClient(
-        ip,
-        username,
-        password,
-        api_prefix=profile.api_prefix,
-        timeout=timeout,
-    ).get_logfile()
 
 
 def _text_files(data: bytes, filters: tuple[str, ...]) -> dict[str, list[str]]:
@@ -783,29 +731,25 @@ def _register_tail_logs(main: click.Group) -> None:
             if target.device_type == DeviceType.TKS_IP:
                 host = resolve_tks_ip(target.host or ip)
                 resolved_key = resolve_tks_aes_key(aes_key, host=host)
-                data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                data = _tks_logfile(host, resolved_key)
                 tks_seen: dict[str, int] = {}
                 _print_new_lines(_tks_text_files(data, files), tks_seen, lines)
 
                 while True:
                     time.sleep(interval)
-                    data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                    data = _tks_logfile(host, resolved_key)
                     _print_new_lines(_tks_text_files(data, files), tks_seen, 0)
 
-            profile, ip, username, password = resolve_login(
-                target.host or ip,
-                username,
-                password,
-            )
+            device = _device_client(target.host or ip, password, username, timeout)
             # First fetch — establish baseline (optionally show tail of existing content).
-            data = _fetch_tail_logs(profile, ip, username, password, timeout)
+            data = device.logfile()
             seen: dict[str, int] = {}
             _print_new_lines(_text_files(data, files), seen, lines)
 
             # Polling loop — only new lines.
             while True:
                 time.sleep(interval)
-                data = _fetch_tail_logs(profile, ip, username, password, timeout)
+                data = device.logfile()
                 _print_new_lines(_text_files(data, files), seen, 0)
 
 
@@ -822,8 +766,8 @@ def _register_tks_pull_logs(main: click.Group) -> None:
     def tks_pull_logs(tks_ip: str | None, aes_key: str | None, output: str) -> None:
         """Download and decrypt the diagnostic log file from the TKS-IP gateway."""
         host = resolve_tks_ip(tks_ip)
-        resolved_key = resolve_tks_aes_key(aes_key)
-        data = cs.download_tks_logfile(host, aes_key=resolved_key)
+        resolved_key = resolve_tks_aes_key(aes_key, host=host)
+        data = _tks_logfile(host, resolved_key)
         Path(output).write_bytes(data)
         console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
 
@@ -869,14 +813,14 @@ def _register_tks_tail_logs(main: click.Group) -> None:
         """Poll the TKS-IP gateway's log file and print only new lines (like tail -f)."""
         with suppress(KeyboardInterrupt, click.exceptions.Abort):
             host = resolve_tks_ip(tks_ip)
-            resolved_key = resolve_tks_aes_key(aes_key)
-            data = cs.download_tks_logfile(host, aes_key=resolved_key)
+            resolved_key = resolve_tks_aes_key(aes_key, host=host)
+            data = _tks_logfile(host, resolved_key)
             seen: dict[str, int] = {}
             _print_new_lines(_tks_text_files(data, files), seen, lines)
 
             while True:
                 time.sleep(interval)
-                data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                data = _tks_logfile(host, resolved_key)
                 _print_new_lines(_tks_text_files(data, files), seen, 0)
 
 

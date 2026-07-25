@@ -118,6 +118,10 @@ class TksIp:
         """Return normalized, typed device information."""
         return DeviceInfo.from_webservice(self.device_info(long=long))
 
+    def raw_device_info(self) -> dict[str, str]:
+        """Return the TKS-IP assistant's native labelled information."""
+        return self._web().device_info()
+
     def network_info(self) -> dict[str, object]:
         """Return the read-only network and video configuration."""
         return self._web().network_info()

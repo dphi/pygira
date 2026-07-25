@@ -481,14 +481,7 @@ def _register_get_ntp(main: click.Group) -> None:
     ) -> None:
         """Show current NTP configuration."""
         device = _device_client(ip, password, username, timeout)
-        result = device.device_info(long=True)
-        data = result.get("data", result)
-        ntp = {
-            "Ntp": data.get("Ntp"),
-            "NtpServerAddress": data.get("NtpServerAddress"),
-            "NtpInterval": data.get("NtpInterval"),
-        }
-        console.print_json(json.dumps(ntp))
+        console.print_json(json.dumps(device.ntp_info()))
 
 
 def _network_config_from_kwargs(kwargs: dict[str, object], current: dict) -> NetworkConfig:
@@ -540,17 +533,8 @@ def _register_get_ip(main: click.Group) -> None:
         timeout: float,
     ) -> None:
         """Show current network settings."""
-        data = _device_client(ip, password, username, timeout).device_info(long=True)
-        info = data.get("data", data)
-        network = {
-            "dhcp": info.get("Dhcp"),
-            "ip_address": info.get("IpAddress"),
-            "subnet_mask": info.get("SubnetMask"),
-            "default_gateway": info.get("DefaultGateway"),
-            "primary_dns": info.get("NameServer"),
-            "secondary_dns": info.get("SecondaryDns", info.get("SecondaryDNS")),
-        }
-        console.print_json(json.dumps(network))
+        device = _device_client(ip, password, username, timeout)
+        console.print_json(json.dumps(device.network_info()))
 
 
 def register(main: click.Group) -> None:
