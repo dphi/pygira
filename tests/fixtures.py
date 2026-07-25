@@ -198,6 +198,7 @@ TKS_SYSTEM_HTML = """\
 TKS_OVERVIEW_HTML = """\
 <div id="i112" class="mainMenu"><div id="i113" class="mmTable"><table id="c67">
 <tr id="e13" class="ui-single"><td class="mmTableEntry cell0"><div class="ui-label">
+<a id="l2"><span class="ui-text-style-default">Netzwerkzugang einrichten</span></a>
 <a id="l5"><span class="ui-text-style-default">Sicherung / Wiederherstellung</span></a>
 <a id="l6"><span class="ui-text-style-default">Update</span></a>
 <a id="l7"><span class="ui-text-style-default">Zugangsdaten</span></a>
@@ -206,6 +207,52 @@ TKS_OVERVIEW_HTML = """\
 <a id="l10"><span class="ui-text-style-default">Datum und Uhrzeit</span></a>
 </div></td></tr>
 </table></div></div>
+"""
+
+TKS_DATE_TIME_HTML = """\
+<div id="c2"><button><span>Übersicht</span></button></div>
+<div class="aDateTime">
+  <div class="aDTTZCombo"><div id="c155"><select>
+    <option value="0">UTC</option>
+    <option class="ui-state-active" value="1">Europe/Berlin</option>
+  </select></div></div>
+  <div class="aDTAutoRadio"><div id="c157">
+    <input name="g1" type="radio" checked="checked" />
+  </div></div>
+  <div class="aDTAutoCombo"><div id="c156"><select>
+    <option value="0">time.example.test</option>
+  </select></div></div>
+  <div class="aDTManualRadio"><div id="c164"><input name="g1" type="radio" /></div></div>
+  <div class="aDTMDatePicker"><div id="c159"><div id="c158"><input type="text" /></div></div></div>
+  <div class="aDTMHour"><div id="c160"><input type="text" /></div></div>
+  <div class="aDTMMinute"><div id="c162"><input type="text" /></div></div>
+</div>
+"""
+
+TKS_NETWORK_HTML = """\
+<div id="c2"><button><span>Übersicht</span></button></div>
+<div class="a2Network">
+  <div class="a2NCGID"><div id="c204"><select>
+    <option value="0">1</option><option class="ui-state-active" value="1">2</option>
+  </select></div></div>
+  <div class="a2NCNetworkName"><div id="c206"><input type="text" /></div></div>
+  <div class="a2NRadios">
+    <div class="a2NRadio"><div id="c207"><input name="g3" type="radio" /></div></div>
+    <div class="a2NRadio"><div id="c218">
+      <input name="g3" type="radio" checked="checked" />
+    </div></div>
+  </div>
+  <div class="a2NManualEntry"><span>IP-Adresse</span><div id="c209"><input /></div></div>
+  <div class="a2NManualEntry"><span>Subnetzmaske</span><div id="c211"><input /></div></div>
+  <div class="a2NManualEntry"><span>Nameserver</span><div id="c213"><input /></div></div>
+  <div class="a2NManualEntry"><span>Standardgateway</span><div id="c216"><input /></div></div>
+  <div class="a2VRadios">
+    <div class="a2VRadio"><div id="c221">
+      <input name="g4" type="radio" checked="checked" />
+    </div></div>
+    <div class="a2VRadio"><div id="c222"><input name="g4" type="radio" /></div></div>
+  </div>
+</div>
 """
 
 # Trimmed from the Administration assistant's Geräteinfos panel; values are

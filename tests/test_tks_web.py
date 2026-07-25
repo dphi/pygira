@@ -13,8 +13,10 @@ from pygira.tks_web import TksWebClient, _find_widget_id
 from tests import _httpmock as respx
 from tests._httpmock import Request, Response
 from tests.fixtures import (
+    TKS_DATE_TIME_HTML,
     TKS_DEVICE_INFO_HTML,
     TKS_LOGIN_HTML,
+    TKS_NETWORK_HTML,
     TKS_OVERVIEW_HTML,
     TKS_ROOT_HTML,
     TKS_SYSTEM_HTML,
@@ -83,11 +85,64 @@ def test_find_link_id_raises_when_label_missing() -> None:
         tks_web._find_link_id(TKS_OVERVIEW_HTML, "Nonexistent Label")
 
 
+def test_find_button_id_finds_overview_control_by_label() -> None:
+    assert tks_web._find_button_id(TKS_DATE_TIME_HTML, "Übersicht") == "c2"
+
+
 def test_parse_device_info_pairs_names_with_values() -> None:
     info = tks_web._parse_device_info(TKS_DEVICE_INFO_HTML)
     assert info["Software-Version"] == "05.04.00.08"
     assert info["MAC-Adresse"] == "AA:BB:CC:DD:EE:FF"
     assert info["Busadresse"] == "0xEA81DF"
+
+
+def test_collect_html_fragments_keeps_multi_fragment_content_commands() -> None:
+    commands = [
+        0,
+        [0, 0, "#content", ["<section>first</section>", "<section>second</section>"], True],
+        [8, 1, "#date", 2026, 7, 25, {"dayNames": ["Monday"]}],
+    ]
+
+    assert tks_web._collect_html_fragments(commands) == (
+        "<section>first</section><section>second</section>"
+    )
+
+
+def test_parse_date_time_info_combines_dom_state_and_command_values() -> None:
+    commands = [
+        [26, 32, "#c158", "25.07.2026"],
+        [26, 32, "#c160", "14"],
+        [26, 32, "#c162", "30"],
+    ]
+
+    assert tks_web._parse_date_time_info(TKS_DATE_TIME_HTML, commands) == {
+        "timezone": "Europe/Berlin",
+        "automatic": True,
+        "ntp_server": "time.example.test",
+        "date": "25.07.2026",
+        "time": "14:30",
+    }
+
+
+def test_parse_network_info_combines_dom_state_and_command_values() -> None:
+    commands = [
+        [26, 32, "#c206", "gateway-name"],
+        [26, 32, "#c209", "192.0.2.10"],
+        [26, 32, "#c211", "255.255.255.0"],
+        [26, 32, "#c213", "192.0.2.53"],
+        [26, 32, "#c216", "192.0.2.1"],
+    ]
+
+    assert tks_web._parse_network_info(TKS_NETWORK_HTML, commands) == {
+        "gateway_id": "2",
+        "network_name": "gateway-name",
+        "dhcp": False,
+        "ip_address": "192.0.2.10",
+        "subnet_mask": "255.255.255.0",
+        "nameserver": "192.0.2.53",
+        "default_gateway": "192.0.2.1",
+        "video_resolution": "VGA",
+    }
 
 
 @respx.mock
@@ -199,6 +254,80 @@ def test_device_info_waits_for_panel_from_command_poll() -> None:
 
     assert info["Software-Version"] == "05.04.00.08"
     assert poll_count["n"] == 1
+
+
+@respx.mock
+def test_date_time_info_navigates_to_read_only_panel() -> None:
+    client = TksWebClient(HOST)
+    client._sid = "test-sid"
+    client._navigation_html = TKS_OVERVIEW_HTML
+    json_route = respx.get(f"http://{HOST}:8080/json").mock(
+        return_value=Response(
+            200,
+            json=[
+                1,
+                [0, 21, "#content", [TKS_DATE_TIME_HTML]],
+                [26, 32, "#c158", "25.07.2026"],
+                [26, 32, "#c160", "14"],
+                [26, 32, "#c162", "30"],
+            ],
+        ),
+    )
+
+    info = client.date_time_info()
+
+    assert info["time"] == "14:30"
+    assert _parse_data(json_route.calls.last.request.url) == ["link", "l10"]
+
+
+@respx.mock
+def test_network_info_navigates_to_read_only_panel() -> None:
+    client = TksWebClient(HOST)
+    client._sid = "test-sid"
+    client._navigation_html = TKS_OVERVIEW_HTML
+    json_route = respx.get(f"http://{HOST}:8080/json").mock(
+        return_value=Response(
+            200,
+            json=[
+                1,
+                [0, 21, "#content", [TKS_NETWORK_HTML]],
+                [26, 32, "#c206", "gateway-name"],
+            ],
+        ),
+    )
+
+    info = client.network_info()
+
+    assert info["network_name"] == "gateway-name"
+    assert _parse_data(json_route.calls.last.request.url) == ["link", "l2"]
+
+
+@respx.mock
+def test_read_only_pages_return_to_overview_before_second_navigation() -> None:
+    client = TksWebClient(HOST)
+    client._sid = "test-sid"
+    client._navigation_html = TKS_OVERVIEW_HTML
+
+    def json_side_effect(request: Request) -> Response:
+        data = _parse_data(request.url)
+        if data == ["link", "l10"]:
+            return Response(200, json=[1, [0, 21, "#content", [TKS_DATE_TIME_HTML]]])
+        if data == ["click", "c2"]:
+            return Response(200, json=[2, [0, 21, "#menu", [TKS_OVERVIEW_HTML]]])
+        if data == ["link", "l2"]:
+            return Response(200, json=[3, [0, 21, "#content", [TKS_NETWORK_HTML]]])
+        return _ack_response()
+
+    json_route = respx.get(f"http://{HOST}:8080/json").mock(side_effect=json_side_effect)
+
+    client.date_time_info()
+    client.network_info()
+
+    assert [_parse_data(call.request.url) for call in json_route.calls] == [
+        ["link", "l10"],
+        ["click", "c2"],
+        ["link", "l2"],
+    ]
 
 
 @respx.mock

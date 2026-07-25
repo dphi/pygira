@@ -26,6 +26,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from lxml import html as lxml_html
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 
 HTML_BODY_COMMAND_MIN_PARTS = 4
 _MGR_FN_COMMAND_MIN_PARTS = 2
+_TEXTBOX_VALUE_COMMAND_MIN_PARTS = 4
 _PROTOCOL = "TKS-IP"
 
 _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
@@ -51,6 +53,18 @@ _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
 _SESSION_CLOSED = (0, 18)
 _INVALID_SITE_ID = (0, 19)
 _POLL_INTERVAL_SECONDS = 0.5
+_NETWORK_FIELD_LABELS = {
+    "IP-Adresse": "ip_address",
+    "Subnetzmaske": "subnet_mask",
+    "Nameserver": "nameserver",
+    "Standardgateway": "default_gateway",
+}
+
+
+@dataclass
+class _PageSnapshot:
+    html: str
+    commands: list[Any]
 
 
 def _scan_session_signal(commands: list[Any]) -> bool:
@@ -118,24 +132,45 @@ def _find_link_id(html: str, label: str) -> str:
     return link_id
 
 
+def _find_button_id(html: str, label: str) -> str:
+    """Find a dynamic button-container id by its visible text."""
+    tree = lxml_html.fromstring(html)
+    controls = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            '//div[@id][button[normalize-space(.)=$label]]',
+            label=label,
+        ),
+    )
+    if not controls:
+        msg = f"TKS-IP button labelled {label!r} not found"
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-button", msg)
+    control_id = controls[0].get("id")
+    assert control_id is not None
+    return control_id
+
+
 def _collect_html_fragments(commands: list[Any]) -> str:
     """Concatenate every HTML fragment argument in a command response.
 
-    Content commands (replaceContent, appendEntry, ...) each carry their
-    fragment as a one-element list, e.g. `[0, 21, "#c128", ["<div>...</div>"]]`.
+    Content commands (replaceContent, appendEntry, ...) carry one or more
+    fragments in a list, e.g. `[0, 21, "#c128", ["<div>...</div>"]]`. The
+    Administration shell uses a two-fragment variant for its main content.
     For read-only parsing we don't need to replay these into a DOM tree at the
-    right place — concatenating every fragment and querying by CSS class is
-    enough to find labelled name/value pairs anywhere in the response.
+    right place — concatenating every HTML-looking fragment and querying by
+    CSS class is enough to find labelled fields anywhere in the response.
     """
     fragments: list[str] = []
     for cmd in commands[1:]:
         if not isinstance(cmd, list):
             continue
-        fragments.extend(
-            arg[0]
-            for arg in cmd
-            if isinstance(arg, list) and len(arg) == 1 and isinstance(arg[0], str)
-        )
+        for arg in cmd:
+            if isinstance(arg, list):
+                fragments.extend(
+                    item
+                    for item in arg
+                    if isinstance(item, str) and item.lstrip().startswith("<")
+                )
     return "".join(fragments)
 
 
@@ -159,6 +194,18 @@ def _contains_widget(html_blob: str, css_class: str) -> bool:
     return True
 
 
+def _contains_class(html_blob: str, css_class: str) -> bool:
+    if not html_blob:
+        return False
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    return bool(
+        tree.xpath(
+            '//*[contains(concat(" ", normalize-space(@class), " "), $class_name)]',
+            class_name=f" {css_class} ",
+        ),
+    )
+
+
 def _parse_device_info(html_blob: str) -> dict[str, str]:
     """Parse Geräteinfos name/value rows out of concatenated Administration HTML."""
     if not html_blob:
@@ -169,6 +216,120 @@ def _parse_device_info(html_blob: str) -> dict[str, str]:
     return {
         (name.text_content() or "").rstrip(":").strip(): (value.text_content() or "").strip()
         for name, value in zip(names, values, strict=False)
+    }
+
+
+def _selected_option_text(container: "HtmlElement") -> str | None:
+    options = cast("list[HtmlElement]", container.xpath(".//select/option"))
+    selected = next(
+        (
+            option
+            for option in options
+            if option.get("selected") is not None
+            or "ui-state-active" in (option.get("class") or "").split()
+        ),
+        None,
+    )
+    option = selected if selected is not None else (options[0] if options else None)
+    return (option.text_content() or "").strip() if option is not None else None
+
+
+def _textbox_values(commands: list[Any]) -> dict[str, str]:
+    """Return TextboxManager.setValue values keyed by their dynamic selector."""
+    return {
+        command[2]: command[3]
+        for command in commands
+        if isinstance(command, list)
+        and len(command) >= _TEXTBOX_VALUE_COMMAND_MIN_PARTS
+        and command[:2] == [26, 32]
+        and isinstance(command[2], str)
+        and isinstance(command[3], str)
+    }
+
+
+def _control_selector(container: "HtmlElement") -> str | None:
+    controls = cast(
+        "list[HtmlElement]",
+        container.xpath(
+            ".//input/ancestor::div[@id][1] | .//select/ancestor::div[@id][1]",
+        ),
+    )
+    control_id = controls[0].get("id") if controls else None
+    return f"#{control_id}" if control_id else None
+
+
+def _parse_date_time_info(html_blob: str, commands: list[Any]) -> dict[str, object]:
+    """Parse the current, read-only date/time settings from an Administration page."""
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    values = _textbox_values(commands)
+
+    def container(css_class: str) -> "HtmlElement | None":
+        matches = cast("list[HtmlElement]", tree.xpath(f'//*[@class="{css_class}"]'))
+        return matches[0] if matches else None
+
+    def textbox(css_class: str) -> str | None:
+        owner = container(css_class)
+        selector = _control_selector(owner) if owner is not None else None
+        return values.get(selector) if selector else None
+
+    timezone = container("aDTTZCombo")
+    ntp_server = container("aDTAutoCombo")
+    automatic = container("aDTAutoRadio")
+    hour = textbox("aDTMHour")
+    minute = textbox("aDTMMinute")
+    return {
+        "timezone": _selected_option_text(timezone) if timezone is not None else None,
+        "automatic": bool(automatic is not None and automatic.xpath(".//input[@checked]")),
+        "ntp_server": _selected_option_text(ntp_server) if ntp_server is not None else None,
+        "date": textbox("aDTMDatePicker"),
+        "time": f"{hour}:{minute}" if hour is not None and minute is not None else None,
+    }
+
+
+def _parse_network_info(html_blob: str, commands: list[Any]) -> dict[str, object]:
+    """Parse current network/video settings without submitting the form."""
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    values = _textbox_values(commands)
+
+    def first(css_class: str) -> "HtmlElement | None":
+        matches = cast("list[HtmlElement]", tree.xpath(f'//*[@class="{css_class}"]'))
+        return matches[0] if matches else None
+
+    def textbox(owner: "HtmlElement | None") -> str | None:
+        selector = _control_selector(owner) if owner is not None else None
+        return values.get(selector) if selector else None
+
+    gateway_id = first("a2NCGID")
+    network_name = first("a2NCNetworkName")
+    manual_entries = cast("list[HtmlElement]", tree.xpath('//*[@class="a2NManualEntry"]'))
+    manual_values: dict[str, str | None] = {}
+    for entry in manual_entries:
+        label = " ".join(entry.text_content().split())
+        key = next(
+            (
+                field_key
+                for prefix, field_key in _NETWORK_FIELD_LABELS.items()
+                if label.startswith(prefix)
+            ),
+            None,
+        )
+        if key is not None:
+            manual_values[key] = textbox(entry)
+    radios = cast("list[HtmlElement]", tree.xpath('//*[@class="a2NRadio"]//input'))
+    video_radios = cast("list[HtmlElement]", tree.xpath('//*[@class="a2VRadio"]//input'))
+    return {
+        "gateway_id": _selected_option_text(gateway_id) if gateway_id is not None else None,
+        "network_name": textbox(network_name),
+        "dhcp": bool(radios and radios[0].get("checked") is not None),
+        **{key: manual_values.get(key) for key in _NETWORK_FIELD_LABELS.values()},
+        "video_resolution": next(
+            (
+                resolution
+                for radio, resolution in zip(video_radios, ("VGA", "QVGA"), strict=False)
+                if radio.get("checked") is not None
+            ),
+            None,
+        ),
     }
 
 
@@ -194,6 +355,7 @@ class TksWebClient:
         self._client = httpx.Client(base_url=f"http://{host}:8080", timeout=timeout)
         self._sid: str | None = None
         self._navigation_html: str | None = None
+        self._current_page_html: str | None = None
 
     def _connect(self) -> None:
         # The browser always establishes bootstrap state before opening the
@@ -209,6 +371,7 @@ class TksWebClient:
             raise ProtocolError(_PROTOCOL, "connect", "missing-session", msg)
         self._sid = match.group(1)
         self._navigation_html = None
+        self._current_page_html = None
 
     def _send(self, data: list[object], *, _reconnected: bool = False) -> list[Any]:
         if self._sid is None:
@@ -247,16 +410,17 @@ class TksWebClient:
         """Send a reload and return the main content HTML."""
         return self._extract_html(self._send(["reload"]))
 
-    def _wait_for_html(
+    def _wait_for_page(
         self,
         commands: list[Any],
         predicate: Callable[[str], bool],
         *,
         timeout: float,
         operation: str,
-    ) -> str:
+    ) -> _PageSnapshot:
         """Accumulate HTML from a send and later polls until a page is complete."""
         html_blob = _collect_html_fragments(commands)
+        collected_commands = list(commands[1:])
         deadline = time.monotonic() + timeout
         while not predicate(html_blob):
             remaining = deadline - time.monotonic()
@@ -264,8 +428,10 @@ class TksWebClient:
                 msg = f"timed out waiting for TKS-IP {operation}"
                 raise ProtocolError(_PROTOCOL, operation, "timeout", msg)
             time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
-            html_blob += _collect_html_fragments(self.poll())
-        return html_blob
+            polled = self.poll()
+            html_blob += _collect_html_fragments(polled)
+            collected_commands.extend(polled[1:])
+        return _PageSnapshot(html=html_blob, commands=collected_commands)
 
     def poll(self, *, _reconnected: bool = False) -> list[Any]:
         """Poll the command loop, keeping the temporary web session alive."""
@@ -314,17 +480,46 @@ class TksWebClient:
         commands = self._send(["value", pass_id, password, True, True, False])
 
         try:
-            self._navigation_html = self._wait_for_html(
+            self._navigation_html = self._wait_for_page(
                 commands,
                 lambda page: _contains_link(page, "Geräteinfos"),
                 timeout=timeout,
                 operation="authenticated menu",
-            )
+            ).html
         except ProtocolError as exc:
             msg = "TKS-IP login failed or timed out — check tks_ip credentials"
             command = "TKS-IP login"
             response = {"id": "timeout", "error": msg}
             raise AuthenticationError(command, response) from exc
+
+    def _navigate_page(
+        self,
+        label: str,
+        predicate: Callable[[str], bool],
+        *,
+        timeout: float,
+    ) -> _PageSnapshot:
+        if self._current_page_html is not None:
+            overview_id = _find_button_id(self._current_page_html, "Übersicht")
+            overview = self._wait_for_page(
+                self._send(["click", overview_id]),
+                lambda html: _contains_link(html, label),
+                timeout=timeout,
+                operation="Übersicht",
+            )
+            self._navigation_html = overview.html
+            self._current_page_html = None
+        menu_html = self._navigation_html or self.reload()
+        self._navigation_html = menu_html
+        link_id = _find_link_id(menu_html, label)
+        page = self._wait_for_page(
+            self._send(["link", link_id]),
+            predicate,
+            timeout=timeout,
+            operation=label,
+        )
+        self._current_page_html = page.html
+        return page
 
     def _navigate(
         self,
@@ -333,14 +528,7 @@ class TksWebClient:
         *,
         timeout: float,
     ) -> str:
-        menu_html = self._navigation_html or self.reload()
-        link_id = _find_link_id(menu_html, label)
-        return self._wait_for_html(
-            self._send(["link", link_id]),
-            predicate,
-            timeout=timeout,
-            operation=label,
-        )
+        return self._navigate_page(label, predicate, timeout=timeout).html
 
     def device_info(self, *, timeout: float = 10.0) -> dict[str, str]:
         """Read the read-only device-info panel from the Administration page.
@@ -355,6 +543,24 @@ class TksWebClient:
             timeout=timeout,
         )
         return _parse_device_info(html)
+
+    def date_time_info(self, *, timeout: float = 10.0) -> dict[str, object]:
+        """Read the current date/time configuration without changing it."""
+        page = self._navigate_page(
+            "Datum und Uhrzeit",
+            lambda html: _contains_class(html, "aDateTime"),
+            timeout=timeout,
+        )
+        return _parse_date_time_info(page.html, page.commands)
+
+    def network_info(self, *, timeout: float = 10.0) -> dict[str, object]:
+        """Read the current network and video configuration without changing it."""
+        page = self._navigate_page(
+            "Netzwerkzugang einrichten",
+            lambda html: _contains_class(html, "a2Network"),
+            timeout=timeout,
+        )
+        return _parse_network_info(page.html, page.commands)
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""

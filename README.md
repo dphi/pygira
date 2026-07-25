@@ -239,8 +239,8 @@ Optional read-only hardware smoke tests are documented in the contributing guide
 an explicit enable flag and environment-only credentials; the normal test suite never connects
 to hardware.
 
-The [TKS-IP API support map](docs/tks-ip-api-support.md) distinguishes supported management
-interfaces from privacy-sensitive, proprietary, and unsafe firmware surfaces.
+TKS-IP support intentionally excludes camera, debug-RPC, SSH, SIP, and unauthenticated
+network-configuration surfaces from the general management API.
 
 ## Architecture
 
@@ -259,7 +259,7 @@ On top of those, two further protocols exist:
 | GDS WebSocket | 4432 WSS | `gds.py` | G1 only: weather + TKS-IP config, factory reset |
 | configurationservice | 4433 HTTPS | `config_service.py` | X1 log download, X1 syslog severity; G1 detection fallback only |
 | GDS-REST-API | 443 HTTPS `/api` | — | X1 only: Gira IoT/Home App KNX control (not used for provisioning) |
-| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: backup save/restore, firmware update — see below |
+| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: read-only device/date/network info, backup/restore, firmware update |
 
 **TKS-IP gateway web app** (separate physical device, not G1/X1): the on-demand
 port-8080 app (`activate-tks-web` starts it) speaks a stateful JSON
@@ -267,7 +267,11 @@ command-loop protocol, not a REST API. Key gotcha: login has no dedicated
 button/endpoint — it submits when the password field's commit event carries
 an extra flag (`["value", id, password, true, true, false]`). Widget ids are
 session-random; `tks_web._find_widget_id()` locates controls by their stable
-CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`).
+CSS class instead (e.g. `aBSaveButton`, `aUSUpdateButton`). Command responses
+are asynchronous: page fragments may arrive in later 500 ms polls, and one
+content command may carry multiple fragments. `TksWebClient` buffers those
+fragments and exposes read-only `device_info()`, `date_time_info()`, and
+`network_info()` methods.
 
 **X1 GDS WebSocket**: Port 4432 is open on the X1 and accepts connections with the same URL/auth format as the G1 (`wss://<host>:4432/gds/api?ui<base64>`). `RegisterApplication` succeeds. However, the X1 GDS is **event-push only** — it sends live value change events (e.g. clock ticks) after registration but does not respond to any query commands (`GetProcessView`, `GetDeviceConfig`, `GetCurrentUser` all time out). All X1 provisioning commands go through iscwebservice at `/webservice`.
 
@@ -408,11 +412,17 @@ X1 running processes (from getDiagnosticPage):
 
 ### TKS-IP HTTP protocol
 
-Port 8080, activated by `config_service.activate_tks_webinterface`:
-- `GET /state?callback=setState` — JSONP polling; response contains `"system.state": "0"` when ready, `"2"` on error
-- `GET /json?sid=...&rid=...&data=[...]` — main JSON-RPC bus; `["documentReady"]` is the boot trigger that starts the web interface
-- `GET /cam` / `/cam.jpg` / `/camera/cam.jpg` — door camera JPEG stream
-- `GET /state` and `POST /json` are served by the embedded `httpd` binary (not nginx)
+The always-on port-80 bootstrap daemon accepts
+`GET /json?...data=["documentReady"]`, which starts the temporary port-8080
+application. The application then uses:
+
+- `GET /state?callback=setState` to establish browser state before opening a UI session.
+- `GET /`, whose inline `decodeCommand(0,6,"<sid>",0)` supplies the command-session ID.
+- `GET /json?sid=<sid>&rid=0&data=<command>` to send commands, and the same URL without
+  `data` to poll queued responses.
+
+The SID cookie set by `/state` is not interchangeable with the inline command-session
+ID. Camera endpoints (`/cam`, `/cam.jpg`, `/camera/cam.jpg`) are deliberately not used.
 
 ## Key constraints
 
