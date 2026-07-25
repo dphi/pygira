@@ -7,7 +7,7 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv*/
 
 
 # Device credentials — never commit
