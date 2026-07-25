@@ -97,6 +97,8 @@ def register(main: click.Group) -> None:
     _register_basic_maintenance(main)
     _register_pull_logs(main)
     _register_tail_logs(main)
+    _register_tks_pull_logs(main)
+    _register_tks_tail_logs(main)
     _register_logging_commands(main)
     _register_x1_program_commands(main)
 
@@ -571,6 +573,77 @@ def _register_tail_logs(main: click.Group) -> None:
                 time.sleep(interval)
                 data = _fetch_tail_logs(profile, ip, username, password, timeout)
                 _print_new_lines(_text_files(data, files), seen, 0)
+
+
+def _register_tks_pull_logs(main: click.Group) -> None:
+    @main.command("tks-pull-logs")
+    @click.option("--tks-ip", default=None, help="TKS-IP gateway IP address")
+    @click.option(
+        "--aes-key",
+        default=None,
+        metavar="KEY",
+        help="AES-192 key as 24-byte text or 48 hexadecimal characters",
+    )
+    @click.option("--output", default="tks-logs.dat", show_default=True, help="Output file path")
+    def tks_pull_logs(tks_ip: str | None, aes_key: str | None, output: str) -> None:
+        """Download and decrypt the diagnostic log file from the TKS-IP gateway."""
+        host = resolve_tks_ip(tks_ip)
+        resolved_key = resolve_tks_aes_key(aes_key)
+        data = cs.download_tks_logfile(host, aes_key=resolved_key)
+        Path(output).write_bytes(data)
+        console.print(f"[green]Logs saved to {output!r} ({len(data):,} bytes)[/green]")
+
+
+def _register_tks_tail_logs(main: click.Group) -> None:
+    @main.command("tks-tail-logs")
+    @click.option("--tks-ip", default=None, help="TKS-IP gateway IP address")
+    @click.option(
+        "--aes-key",
+        default=None,
+        metavar="KEY",
+        help="AES-192 key as 24-byte text or 48 hexadecimal characters",
+    )
+    @click.option(
+        "--interval",
+        default=5.0,
+        show_default=True,
+        type=float,
+        help="Poll interval in seconds",
+    )
+    @click.option(
+        "--file",
+        "files",
+        multiple=True,
+        metavar="PATTERN",
+        help="Show only files whose name contains PATTERN (repeatable)",
+    )
+    @click.option(
+        "-n",
+        "--lines",
+        default=0,
+        show_default=True,
+        type=int,
+        help="Lines to show from each file on first fetch (0 = skip history)",
+    )
+    def tks_tail_logs(
+        tks_ip: str | None,
+        aes_key: str | None,
+        interval: float,
+        files: tuple[str, ...],
+        lines: int,
+    ) -> None:
+        """Poll the TKS-IP gateway's log file and print only new lines (like tail -f)."""
+        with suppress(KeyboardInterrupt, click.exceptions.Abort):
+            host = resolve_tks_ip(tks_ip)
+            resolved_key = resolve_tks_aes_key(aes_key)
+            data = cs.download_tks_logfile(host, aes_key=resolved_key)
+            seen: dict[str, int] = {}
+            _print_new_lines(_tks_text_files(data, files), seen, lines)
+
+            while True:
+                time.sleep(interval)
+                data = cs.download_tks_logfile(host, aes_key=resolved_key)
+                _print_new_lines(_tks_text_files(data, files), seen, 0)
 
 
 def _register_logging_commands(main: click.Group) -> None:

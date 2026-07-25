@@ -120,7 +120,7 @@ def test_tks_info_command() -> None:
         patch("pygira.commands.maintenance.resolve_tks_login", return_value=login),
         patch("pygira.commands.maintenance.TksWebClient", return_value=client),
     ):
-        result = CliRunner().invoke(main, ["tks", "info"])
+        result = CliRunner().invoke(main, ["tks-info"])
 
     assert result.exit_code == 0, result.output
     assert "Software-Version" in result.output
@@ -167,6 +167,53 @@ password = "other-secret"
     assert result.exit_code == 0, result.output
     client.login.assert_called_once_with("configured-admin", "configured-secret")
     assert output.read_bytes() == b"backup"
+
+
+def test_tks_pull_logs_command(tmp_path: Path) -> None:
+    output = tmp_path / "logs.dat"
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
+        patch(
+            "pygira.commands.maintenance.resolve_tks_aes_key",
+            return_value="0123456789abcdefghijklmn",
+        ),
+        patch(
+            "pygira.commands.maintenance.cs.download_tks_logfile",
+            return_value=b"log data",
+        ) as download,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["tks-pull-logs", "--aes-key", "cli-key", "--output", str(output)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert output.read_bytes() == b"log data"
+    download.assert_called_once_with(HOST, aes_key="0123456789abcdefghijklmn")
+
+
+def test_tks_tail_logs_command_prints_new_lines_only() -> None:
+    first = b"line one\nline two\n"
+    second = b"line one\nline two\nline three\n"
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
+        patch(
+            "pygira.commands.maintenance.resolve_tks_aes_key",
+            return_value="0123456789abcdefghijklmn",
+        ),
+        patch(
+            "pygira.commands.maintenance.cs.download_tks_logfile",
+            side_effect=[first, second, KeyboardInterrupt],
+        ),
+        patch("pygira.commands.maintenance.time.sleep"),
+    ):
+        result = CliRunner().invoke(main, ["tks-tail-logs"])
+
+    assert result.exit_code == 0, result.output
+    assert "line one" not in result.output
+    assert "line three" in result.output
 
 
 def test_set_weather_and_g1_factory_reset() -> None:
