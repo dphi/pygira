@@ -14,6 +14,15 @@ pip install pygira
 uv tool install pygira
 ```
 
+Passive SIP monitoring delegates the SIP protocol to the maintained Baresip
+runtime instead of embedding a SIP stack:
+
+```bash
+brew install baresip  # macOS or Linuxbrew
+```
+
+The rest of pygira does not require Baresip.
+
 ## Library usage
 
 The device facades are the recommended public API. They select the correct
@@ -182,6 +191,9 @@ pygira tks activate --tks-ip 192.168.1.10       # start the port-8080 web app
 pygira tks status --tks-ip 192.168.1.10
 pygira tks info --tks-ip 192.168.1.10
 pygira tks sip info --tks-ip 192.168.1.10
+pygira tks sip users add --tks-ip 192.168.1.10 --client-name "Pygira monitor" --sip-user pygira-monitor
+pygira tks sip monitor --tks-ip 192.168.1.10 --sip-user pygira-monitor
+pygira tks sip users delete --tks-ip 192.168.1.10 "Pygira monitor"
 pygira tks backup save --tks-ip 192.168.1.10
 pygira tks backup restore backup.img --tks-ip 192.168.1.10
 pygira tks firmware update firmware.bin --tks-ip 192.168.1.10
@@ -196,6 +208,16 @@ When an AES key is configured, it also reports recent free memory and load,
 internal SIP-daemon responsiveness, the last raw TKS bus state, and known failure
 signatures from the encrypted diagnostic log. These checks do not prove SIP
 registration, SDA cloud connectivity, or the electrical bus/LED state.
+
+`tks sip monitor` registers as a manual-answer SIP client and reports
+registration results, incoming calls, and call termination. It does not answer
+calls, capture media, or send door-opener commands. Pygira starts Baresip with
+an isolated owner-only temporary configuration and consumes its documented
+loopback JSON event stream; the SIP password is not placed in process arguments
+or persistent files. Use `tks sip users add` and `delete` to manage a dedicated
+gateway account. Account provisioning uses the on-demand port-8080 assistant
+and is experimental on firmware 05.04.00.08; the monitor itself uses SIP on UDP
+5060 and does not require port 8080.
 
 TKS-IP log commands require an AES-192 key; no key is built into `pygira`.
 Supply it with `--aes-key`, `PYGIRA_TKS_AES_KEY`, a local `.env` entry, or the
@@ -272,8 +294,9 @@ an explicit enable flag and environment-only credentials; the normal test suite 
 to hardware.
 
 TKS-IP support intentionally excludes camera access, debug RPC, SSH login/control,
-SIP configuration writes, and unauthenticated network-configuration writes from
-the general management API. Read-only SIP inspection is available.
+and unauthenticated network-configuration writes from the general management API.
+Read-only SIP inspection, experimental dedicated SIP-account provisioning, and
+passive SIP event monitoring are available.
 
 ## Architecture
 
@@ -296,7 +319,8 @@ The underlying protocols are:
 | configurationservice | 4433 HTTPS | `config_service.py` | X1 log download, X1 syslog severity; G1 detection fallback only |
 | GDS-REST-API | 443 HTTPS `/api` | — | X1 only: Gira IoT/Home App KNX control (not used for provisioning) |
 | TKS-IP bootstrap | 80 HTTP | `config_service.py` | Activation, detection, passive status, encrypted logs |
-| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: read-only device/date/network/SIP info, backup/restore, firmware update |
+| TKS-IP SIP registrar | 5060 UDP | external Baresip + `baresip_monitor.py` | Passive registration and incoming-call events |
+| TKS-IP web app | 8080 HTTP | `tks_web.py` | TKS-IP gateway only: device/date/network/SIP info, SIP-account provisioning, backup/restore, firmware update |
 
 **TKS-IP gateway web app** (separate physical device, not G1/X1): the on-demand
 port-8080 app (`activate-tks-web` starts it) speaks a stateful JSON
@@ -311,7 +335,9 @@ fragments and exposes read-only `device_info()`, `date_time_info()`, and
 `network_info()` methods. `sip_clients()` also discovers configured IP-phone
 client names plus the selected client's username and incoming-call assignments.
 It reports only whether a password is configured; password values received from
-the legacy UI are deliberately discarded.
+the legacy UI are deliberately discarded. SIP-account mutations use fresh,
+non-persisted sessions so an abandoned assistant form cannot poison later
+commands.
 
 The gateway itself warns that using IP phones sends door-opener telegrams to
 the TKS-IP gateway without encryption. Treat this integration as a trusted-LAN

@@ -17,6 +17,7 @@ from rich.table import Table
 
 from pygira import config_service as cs
 from pygira import weather as weather_mod
+from pygira.baresip_monitor import BaresipMonitor, SipMonitorEvent
 from pygira.commands._target import resolve_device as _device_client
 from pygira.context import (
     _device_type,
@@ -276,6 +277,7 @@ def register(main: click.Group) -> None:
     _register_tks_sip_info(main)
     _register_tks_sip_user_add(main)
     _register_tks_sip_user_delete(main)
+    _register_tks_sip_monitor(main)
     _register_weather(main)
     _register_basic_maintenance(main)
     _register_pull_logs(main)
@@ -568,6 +570,80 @@ def _register_tks_sip_user_delete(main: click.Group) -> None:
         _, device = _tks_device(tks_ip, tks_user, tks_pass)
         device.delete_sip_client(client_name)
         console.print(f"[green]Deleted SIP client {client_name!r}.[/green]")
+
+
+def _sip_caller(event: SipMonitorEvent) -> str:
+    if event.peer_display_name and event.peer_uri:
+        return f"{event.peer_display_name} ({event.peer_uri})"
+    return event.peer_display_name or event.peer_uri or "unknown caller"
+
+
+def _register_tks_sip_monitor(main: click.Group) -> None:
+    @main.command("tks-sip-monitor")
+    @selection_options
+    @_tks_ip_option
+    @click.option(
+        "--sip-user",
+        prompt="SIP monitoring username",
+        help="SIP user configured on the TKS-IP gateway",
+    )
+    @click.option(
+        "--sip-password",
+        prompt=True,
+        hide_input=True,
+        help="SIP password configured on the TKS-IP gateway",
+    )
+    @click.option(
+        "--baresip-executable",
+        default="baresip",
+        show_default=True,
+        help="Baresip executable name or path",
+    )
+    @click.option(
+        "--startup-timeout",
+        default=10.0,
+        show_default=True,
+        type=click.FloatRange(min=0.1),
+        help="Maximum seconds to wait for Baresip's control socket",
+    )
+    def tks_sip_monitor(
+        tks_ip: str | None,
+        sip_user: str,
+        sip_password: str,
+        baresip_executable: str,
+        startup_timeout: float,
+    ) -> None:
+        """Register passively and report incoming TKS-IP door calls."""
+        host = resolve_tks_ip(tks_ip)
+        console.print(f"[bold]Starting passive SIP monitor for {host}…[/bold]")
+        try:
+            with BaresipMonitor(
+                host,
+                sip_user,
+                sip_password,
+                executable=baresip_executable,
+                startup_timeout=startup_timeout,
+            ) as monitor:
+                console.print(
+                    "[dim]Waiting for registration and incoming door calls. Ctrl-C stops.[/dim]",
+                )
+                for event in monitor.events():
+                    observed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+                    if event.type == "REGISTER_OK":
+                        console.print(f"[green]{observed_at} SIP registration succeeded.[/green]")
+                    elif event.type == "REGISTER_FAIL":
+                        detail = f": {event.detail}" if event.detail else ""
+                        console.print(f"[red]{observed_at} SIP registration failed{detail}.[/red]")
+                    elif event.type == "CALL_INCOMING":
+                        console.print(
+                            f"[bold green]{observed_at} Door call received:[/bold green] "
+                            f"{_sip_caller(event)}",
+                        )
+                    elif event.type == "CALL_CLOSED":
+                        detail = f" ({event.detail})" if event.detail else ""
+                        console.print(f"[dim]{observed_at} Door call ended{detail}.[/dim]")
+        except KeyboardInterrupt:
+            console.print("\n[dim]SIP monitor stopped.[/dim]")
 
 
 def _register_weather(main: click.Group) -> None:

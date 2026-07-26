@@ -27,6 +27,10 @@ class OperationTimeoutError(PygiraError):
     """A device operation did not complete within its configured timeout."""
 
 
+class DependencyUnavailableError(PygiraError):
+    """A required external executable or service is unavailable."""
+
+
 class ProtocolError(PygiraError):
     """A non-HTTP device protocol reported an error."""
 

@@ -70,6 +70,7 @@ def test_command_support_lists_nested_commands() -> None:
     assert "network get" in result.output
     assert "tks info" in result.output
     assert "tks sip info" in result.output
+    assert "tks sip monitor" in result.output
     assert "tks sip users add" in result.output
     assert "tks sip users delete" in result.output
 

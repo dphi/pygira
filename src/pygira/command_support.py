@@ -62,6 +62,7 @@ COMMAND_MOVES: dict[str, tuple[str, ...]] = {
     "tks-sip-info": ("tks", "sip", "info"),
     "tks-sip-user-add": ("tks", "sip", "users", "add"),
     "tks-sip-user-delete": ("tks", "sip", "users", "delete"),
+    "tks-sip-monitor": ("tks", "sip", "monitor"),
     "tks-backup-save": ("tks", "backup", "save"),
     "tks-backup-restore": ("tks", "backup", "restore"),
     "tks-firmware-update": ("tks", "firmware", "update"),

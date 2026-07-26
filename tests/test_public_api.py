@@ -23,6 +23,7 @@ def test_public_api_exports_library_entry_points() -> None:
     assert callable(pygira.get_tks_device_status)
     assert callable(pygira.parse_tks_runtime_diagnostics)
     assert issubclass(pygira.AuthenticationError, pygira.PygiraError)
+    assert issubclass(pygira.DependencyUnavailableError, pygira.PygiraError)
     assert issubclass(pygira.DeviceApiError, pygira.PygiraError)
     assert issubclass(pygira.TransportError, pygira.PygiraError)
     assert issubclass(pygira.InvalidInputError, ValueError)

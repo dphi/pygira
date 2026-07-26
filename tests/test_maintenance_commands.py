@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from pygira.baresip_monitor import SipMonitorEvent
 from pygira.cli import main
 from pygira.config_service import (
     TksDeviceStatus,
@@ -330,6 +331,55 @@ def test_tks_sip_user_delete_requires_confirmation() -> None:
     assert aborted.exit_code == 1
     assert deleted.exit_code == 0, deleted.output
     client.delete_sip_client.assert_called_once_with("Pygira monitor")
+
+
+def test_tks_sip_monitor_reports_registration_and_incoming_calls() -> None:
+    monitor = MagicMock()
+    monitor.__enter__.return_value = monitor
+    monitor.events.return_value = iter(
+        [
+            SipMonitorEvent("REGISTER_OK", "ua"),
+            SipMonitorEvent(
+                "CALL_INCOMING",
+                "call",
+                peer_uri="sip:door@192.0.2.10",
+                peer_display_name="Main entrance",
+            ),
+            SipMonitorEvent("CALL_CLOSED", "call", detail="normal call clearing"),
+        ],
+    )
+
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
+        patch("pygira.commands.maintenance.BaresipMonitor", return_value=monitor) as factory,
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                "tks",
+                "sip",
+                "monitor",
+                "--ip",
+                HOST,
+                "--sip-user",
+                "monitor",
+                "--sip-password",
+                "monitor-secret",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "registration succeeded" in result.output
+    assert "Door call received" in result.output
+    assert "Main entrance" in result.output
+    assert "monitor-secret" not in result.output
+    factory.assert_called_once_with(
+        HOST,
+        "monitor",
+        "monitor-secret",
+        executable="baresip",
+        startup_timeout=10.0,
+    )
 
 
 def test_tks_backup_accepts_direct_ip_and_command_local_config(tmp_path: Path) -> None:

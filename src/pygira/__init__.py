@@ -16,6 +16,7 @@ from pygira.devices.tks_ip import TksIp
 from pygira.devices.x1 import X1
 from pygira.exceptions import (
     AuthenticationError,
+    DependencyUnavailableError,
     DeviceApiError,
     DeviceDetectionError,
     InvalidInputError,
@@ -44,6 +45,7 @@ except PackageNotFoundError:  # pragma: no cover - only possible outside an inst
 __all__ = [
     "ApiClient",
     "AuthenticationError",
+    "DependencyUnavailableError",
     "DeviceApiError",
     "DeviceDetectionError",
     "DeviceInfo",

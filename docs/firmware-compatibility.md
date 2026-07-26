@@ -15,6 +15,8 @@ as a protocol contract.
 | Local firmware update | 3.5.63 | 2.8.874.0 | 05.04.00.08 | Beta |
 | Online firmware check/update | 3.5.63 | 2.8.874.0 | Not supported | Beta on G1/X1 |
 | SIP-client inspection | Not applicable | Not applicable | 05.04.00.08 | Confirmed |
+| Passive SIP registration monitor | Not applicable | Not applicable | 05.04.00.08 | Beta |
+| SIP monitoring-account provisioning | Not applicable | Not applicable | 05.04.00.08 | Experimental |
 | Configuration backup/restore | Not exposed | Not exposed | 05.04.00.08 | Beta |
 | GDS weather and TKS configuration | 3.5.63 | Not supported | Not applicable | Confirmed on G1 |
 | X1 program export and import | Not supported | 2.8.874.0 | Not applicable | Experimental |

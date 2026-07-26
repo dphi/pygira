@@ -5,6 +5,18 @@ All notable changes to pygira are documented here. The project follows
 
 ## Unreleased
 
+### Added
+
+- Add passive TKS-IP SIP registration and incoming-call monitoring through the
+  maintained Baresip runtime, without embedding a Python SIP implementation.
+- Add experimental creation and deletion of dedicated TKS-IP SIP monitoring
+  accounts, with incoming-call assignment and password-safe output.
+
+### Changed
+
+- Isolate TKS-IP SIP-account mutations from persisted read sessions so failed
+  assistant forms cannot poison later commands.
+
 ## 0.2.0 - 2026-07-26
 
 ### Added

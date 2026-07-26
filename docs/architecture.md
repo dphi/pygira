@@ -8,7 +8,7 @@ implementations:
 Click command
     -> target resolution
     -> G1, X1, or TksIp facade
-    -> HTTP, configuration-service, GDS, or TKS web transport
+    -> HTTP, configuration-service, GDS, TKS web, or Baresip adapter
     -> device
 ```
 
@@ -25,6 +25,9 @@ Click command
   operations where the devices share a capability.
 - Transport modules own wire formats, authentication, retries, timeouts, and
   protocol error translation.
+- `baresip_monitor` owns only process isolation and Baresip's documented local
+  JSON control framing. Baresip owns SIP registration, digest authentication,
+  SDP, and call signaling; pygira must not implement those protocols.
 - Stable device responses are normalized into models. Raw responses remain
   available through explicitly low-level APIs for protocol research.
 
@@ -33,6 +36,8 @@ authenticated web assistant behind one public API. Read operations use the
 same method names and normalized models as G1/X1 where the concepts overlap.
 Unconfirmed TKS-IP writes raise `UnsupportedCapabilityError`; the facade must
 not imply support merely to make the three classes structurally identical.
+The explicit SIP-account assistant is an experimental exception: mutations use
+fresh sessions, exact display-name matching, and never expose password values.
 
 ## Adding behavior
 
