@@ -274,6 +274,8 @@ def register(main: click.Group) -> None:
     _register_tks_firmware_update(main)
     _register_tks_device_info(main)
     _register_tks_sip_info(main)
+    _register_tks_sip_user_add(main)
+    _register_tks_sip_user_delete(main)
     _register_weather(main)
     _register_basic_maintenance(main)
     _register_pull_logs(main)
@@ -491,6 +493,81 @@ def _register_tks_sip_info(main: click.Group) -> None:
             "[yellow]Device warning: IP-phone door-opener telegrams are unencrypted "
             f"(warning acknowledged: {acknowledged}).[/yellow]",
         )
+
+
+def _register_tks_sip_user_add(main: click.Group) -> None:
+    @main.command("tks-sip-user-add")
+    @_tks_login_options
+    @click.option(
+        "--client-name",
+        "client_name",
+        prompt="SIP client display name",
+        help="Display name stored on the TKS-IP gateway",
+    )
+    @click.option(
+        "--sip-user",
+        prompt="SIP username",
+        help="Username used by the monitoring client",
+    )
+    @click.option(
+        "--sip-password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Password used by the monitoring client",
+    )
+    @click.option(
+        "--incoming-call",
+        "incoming_calls",
+        multiple=True,
+        help="Incoming call to assign; repeat as needed (default: all calls)",
+    )
+    def tks_sip_user_add(  # noqa: PLR0913 - gateway and SIP identities are distinct
+        tks_ip: str | None,
+        tks_user: str,
+        tks_pass: str,
+        client_name: str,
+        sip_user: str,
+        sip_password: str,
+        incoming_calls: tuple[str, ...],
+    ) -> None:
+        """Create a SIP account for passive door-call monitoring."""
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        assignments = set(incoming_calls) if incoming_calls else None
+        result = device.create_sip_client(
+            client_name,
+            sip_user,
+            sip_password,
+            incoming_calls=assignments,
+        )
+        assigned = cast("tuple[str, ...]", result["incoming_calls"])
+        console.print(
+            f"[green]Created SIP monitoring user {sip_user!r} "
+            f"with {len(assigned)} incoming-call assignment(s).[/green]",
+        )
+
+
+def _register_tks_sip_user_delete(main: click.Group) -> None:
+    @main.command("tks-sip-user-delete")
+    @click.argument("client_name")
+    @_tks_login_options
+    @click.option("--yes", is_flag=True, help="Delete without a confirmation prompt")
+    def tks_sip_user_delete(
+        client_name: str,
+        tks_ip: str | None,
+        tks_user: str,
+        tks_pass: str,
+        yes: bool,
+    ) -> None:
+        """Delete a SIP account by its gateway display name."""
+        if not yes:
+            click.confirm(
+                f"Delete SIP client {client_name!r} from the TKS-IP gateway?",
+                abort=True,
+            )
+        _, device = _tks_device(tks_ip, tks_user, tks_pass)
+        device.delete_sip_client(client_name)
+        console.print(f"[green]Deleted SIP client {client_name!r}.[/green]")
 
 
 def _register_weather(main: click.Group) -> None:

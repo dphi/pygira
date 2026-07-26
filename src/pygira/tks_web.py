@@ -37,7 +37,12 @@ from typing import TYPE_CHECKING, Any, cast
 from lxml import html as lxml_html
 
 from pygira import _http as httpx
-from pygira.exceptions import AuthenticationError, OperationTimeoutError, ProtocolError
+from pygira.exceptions import (
+    AuthenticationError,
+    InvalidInputError,
+    OperationTimeoutError,
+    ProtocolError,
+)
 
 if TYPE_CHECKING:
     from lxml.html import HtmlElement
@@ -45,6 +50,7 @@ if TYPE_CHECKING:
 HTML_BODY_COMMAND_MIN_PARTS = 4
 _MGR_FN_COMMAND_MIN_PARTS = 2
 _TEXTBOX_VALUE_COMMAND_MIN_PARTS = 4
+_BOOLEAN_COMMAND_MIN_PARTS = 3
 _PROTOCOL = "TKS-IP"
 
 _SID_RE = re.compile(r'decodeCommand\(0,\s*6,\s*"([^"]+)"')
@@ -79,6 +85,22 @@ class _PageSnapshot:
 class _PersistedSession:
     sid: str
     cookie: str
+
+
+@dataclass(frozen=True)
+class _SipClientRow:
+    name: str
+    row_id: str
+    name_control_id: str
+    delete_control_id: str
+
+
+@dataclass(frozen=True)
+class _SipCallControl:
+    group: str
+    name: str
+    control_id: str
+    assigned: bool
 
 
 def _default_session_cache_path(host: str) -> Path:
@@ -175,6 +197,25 @@ def _find_widget_id(html: str, css_class: str) -> str:
     widget_id = controls[0].get("id")
     assert widget_id is not None
     return widget_id
+
+
+def _find_control_id(html: str, css_class: str) -> str:
+    """Find a control below an element containing one CSS class token."""
+    tree = lxml_html.fromstring(f"<div>{html}</div>")
+    controls = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            '//*[contains(concat(" ", normalize-space(@class), " "), $class_name)]'
+            "//div[@id][descendant::button or descendant::input]",
+            class_name=f" {css_class} ",
+        ),
+    )
+    if not controls:
+        msg = f"TKS-IP control below class {css_class!r} not found"
+        raise ProtocolError(_PROTOCOL, "parse page", "missing-control", msg)
+    control_id = controls[0].get("id")
+    assert control_id is not None
+    return control_id
 
 
 def _find_link_id(html: str, label: str) -> str:
@@ -598,6 +639,144 @@ def _parse_sip_incoming_calls(commands: list[Any]) -> list[dict[str, object]]:
     return groups
 
 
+def _sip_client_rows(html_blob: str, commands: list[Any]) -> list[_SipClientRow]:
+    """Return editable SIP client rows and their dynamic controls."""
+    tree = lxml_html.fromstring(f"<div>{html_blob}</div>")
+    values = _textbox_values(commands)
+    rows = cast(
+        "list[HtmlElement]",
+        tree.xpath(
+            "//tr[@id][descendant::*[contains("
+            'concat(" ", normalize-space(@class), " "), " ssipPTableEntry ")]]',
+        ),
+    )
+    result: list[_SipClientRow] = []
+    for row in rows:
+        name_cells = cast(
+            "list[HtmlElement]",
+            row.xpath(
+                './/*[contains(concat(" ", normalize-space(@class), " "), '
+                '" ssipPTableEntry ") and contains('
+                'concat(" ", normalize-space(@class), " "), " cell0 ")]',
+            ),
+        )
+        delete_cells = cast(
+            "list[HtmlElement]",
+            row.xpath(
+                './/*[contains(concat(" ", normalize-space(@class), " "), '
+                '" ssipPTableEntry ") and contains('
+                'concat(" ", normalize-space(@class), " "), " cell1 ")]',
+            ),
+        )
+        if not name_cells or not delete_cells:
+            continue
+        name_controls = cast("list[HtmlElement]", name_cells[0].xpath(".//div[@id][.//input]"))
+        delete_controls = cast(
+            "list[HtmlElement]",
+            delete_cells[0].xpath(".//div[@id][.//button]"),
+        )
+        if not name_controls or not delete_controls:
+            continue
+        name_control_id = name_controls[0].get("id")
+        delete_control_id = delete_controls[0].get("id")
+        row_id = row.get("id")
+        if name_control_id is None or delete_control_id is None or row_id is None:
+            continue
+        name = values.get(f"#{name_control_id}", "")
+        result.append(
+            _SipClientRow(
+                name=name,
+                row_id=row_id,
+                name_control_id=name_control_id,
+                delete_control_id=delete_control_id,
+            ),
+        )
+    return result
+
+
+def _sip_call_controls(commands: list[Any]) -> list[_SipCallControl]:
+    """Map incoming-call labels to the checkbox controls that assign them."""
+    controls: list[_SipCallControl] = []
+    group_by_selector: dict[str, str] = {}
+    for command in commands:
+        if (
+            not isinstance(command, list)
+            or len(command) < HTML_BODY_COMMAND_MIN_PARTS
+            or command[:2] != [0, 21]
+            or not isinstance(command[2], str)
+        ):
+            continue
+        target = command[2]
+        for fragment in _html_fragments(command):
+            tree = lxml_html.fromstring(f"<div>{fragment}</div>")
+            group_rows = cast(
+                "list[HtmlElement]",
+                tree.xpath('//tr[@id][descendant::*[@class="groupTitleInternal"]]'),
+            )
+            for row in group_rows:
+                label = " ".join(
+                    row.xpath('.//*[@class="groupTitleInternal"]')[0].text_content().split(),
+                )
+                group_by_selector[f"#{row.get('id')}"] = label
+
+            group = group_by_selector.get(target.split(" ", 1)[0])
+            if group is None:
+                continue
+            call_rows = cast(
+                "list[HtmlElement]",
+                tree.xpath(
+                    "//tr[descendant::*[contains("
+                    'concat(" ", normalize-space(@class), " "), " ssipPICTableEntry ")]]',
+                ),
+            )
+            for row in call_rows:
+                checkboxes = cast(
+                    "list[HtmlElement]",
+                    row.xpath(".//div[@id][descendant::input[@type='checkbox']]"),
+                )
+                if not checkboxes:
+                    continue
+                control_id = checkboxes[0].get("id")
+                if control_id is None:
+                    continue
+                controls.append(
+                    _SipCallControl(
+                        group=group,
+                        name=" ".join(row.text_content().split()),
+                        control_id=control_id,
+                        assigned=bool(checkboxes[0].xpath(".//input[@checked]")),
+                    ),
+                )
+    return controls
+
+
+def _sip_validation_errors(commands: list[Any]) -> tuple[str, ...]:
+    """Extract validation text emitted by the assistant widget manager."""
+    return tuple(
+        command[3]
+        for command in commands
+        if isinstance(command, list)
+        and len(command) >= HTML_BODY_COMMAND_MIN_PARTS
+        and command[:2] == [3, 1]
+        and isinstance(command[3], str)
+    )
+
+
+def _validate_sip_client_input(name: str, username: str, password: str) -> None:
+    if not name.strip():
+        msg = "SIP client display name must not be empty"
+        raise InvalidInputError(msg)
+    if not username or any(char.isspace() for char in username):
+        msg = "SIP username must be non-empty and contain no whitespace"
+        raise InvalidInputError(msg)
+    if not password or any(char.isspace() for char in password):
+        msg = "SIP password must be non-empty and contain no whitespace"
+        raise InvalidInputError(msg)
+    if username == password:
+        msg = "SIP password must differ from the username"
+        raise InvalidInputError(msg)
+
+
 def _multipart_body(filename: str, data: bytes) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     body = (
@@ -959,6 +1138,163 @@ class TksWebClient:
         )
         result["incoming_calls"] = _parse_sip_incoming_calls(incoming.commands)
         return result
+
+    def _send_text_value(self, control_id: str, value: str) -> None:
+        self._send(["value", control_id, value, True, False, False])
+
+    def _wait_for_sip_save(self, commands: list[Any], *, timeout: float) -> None:
+        """Wait for the assistant's busy cycle and surface field validation."""
+        deadline = time.monotonic() + timeout
+        saw_busy = False
+        pending = commands
+        while True:
+            errors = _sip_validation_errors(pending)
+            if errors:
+                detail = "; ".join(dict.fromkeys(errors))
+                raise ProtocolError(_PROTOCOL, "save SIP client", "validation", detail)
+            busy_values = [
+                command[2]
+                for command in pending
+                if isinstance(command, list)
+                and len(command) >= _BOOLEAN_COMMAND_MIN_PARTS
+                and command[:2] == [0, 20]
+                and isinstance(command[2], bool)
+            ]
+            for busy in busy_values:
+                if busy:
+                    saw_busy = True
+                elif saw_busy:
+                    return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                msg = "timed out waiting for TKS-IP to save the SIP client configuration"
+                raise ProtocolError(_PROTOCOL, "save SIP client", "timeout", msg)
+            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+            pending = self.poll()
+
+    def create_sip_client(  # noqa: PLR0913 - device form has distinct identity fields
+        self,
+        name: str,
+        username: str,
+        password: str,
+        *,
+        incoming_calls: set[str] | None = None,
+        timeout: float = 15.0,
+    ) -> dict[str, object]:
+        """Create one SIP phone account and assign incoming calls.
+
+        ``incoming_calls=None`` assigns every available incoming call, which is
+        the safe default for a monitoring account. Passwords are written to the
+        gateway but never included in the return value.
+        """
+        _validate_sip_client_input(name, username, password)
+        page = self._navigate_page(
+            "IP-Telefone konfigurieren",
+            lambda html: _contains_class(html, "ssipPAssistant"),
+            timeout=timeout,
+        )
+        existing = _sip_client_rows(page.html, page.commands)
+        if any(row.name == name for row in existing):
+            msg = f"SIP client {name!r} already exists"
+            raise InvalidInputError(msg)
+
+        add_id = _find_link_id(page.html, "Neues IP-Telefon hinzufügen")
+        added_commands = self._send(["link", add_id])
+        added_html = _collect_html_fragments(added_commands)
+        selected_row = next(
+            (
+                command[3].removeprefix("#")
+                for command in added_commands
+                if isinstance(command, list)
+                and len(command) >= _TEXTBOX_VALUE_COMMAND_MIN_PARTS
+                and command[:2] == [25, 30]
+                and isinstance(command[3], str)
+            ),
+            None,
+        )
+        added_rows = _sip_client_rows(added_html, added_commands)
+        row = next((item for item in added_rows if item.row_id == selected_row), None)
+        if row is None:
+            msg = "new SIP client row was not returned by the assistant"
+            raise ProtocolError(_PROTOCOL, "create SIP client", "missing-row", msg)
+
+        self._send_text_value(row.name_control_id, name)
+        self._send_text_value(_find_widget_id(added_html, "ssipPATUserName"), username)
+        self._send_text_value(_find_widget_id(added_html, "ssipPATPassword"), password)
+        self._send_text_value(_find_widget_id(added_html, "ssipPATRePassword"), password)
+
+        warning_id = _find_widget_id(added_html, "ssipPAWCheck")
+        warning_tree = lxml_html.fromstring(f"<div>{added_html}</div>")
+        warning_checked = bool(
+            warning_tree.xpath(
+                '//*[@class="ssipPAWCheck"]//input[@type="checkbox" and @checked]',
+            ),
+        )
+        if not warning_checked:
+            self._send(["value", warning_id, True])
+
+        full_form_html = page.html + added_html
+        tabbar_id, tab_id = _find_tab_selection(
+            full_form_html,
+            "ssipPTabBar",
+            "Rufe (eingehend)",
+        )
+        incoming = self._wait_for_page(
+            self._send(["value", tabbar_id, tab_id]),
+            lambda html: _contains_class(html, "ssipPICTable"),
+            timeout=timeout,
+            operation="Rufe (eingehend)",
+        )
+        controls = _sip_call_controls(incoming.commands)
+        available = {control.name for control in controls}
+        requested = available if incoming_calls is None else incoming_calls
+        unknown = requested - available
+        if unknown:
+            choices = ", ".join(sorted(unknown))
+            msg = f"unknown incoming call assignment(s): {choices}"
+            raise InvalidInputError(msg)
+        for control in controls:
+            should_assign = control.name in requested
+            if control.assigned != should_assign:
+                self._send(["value", control.control_id, should_assign])
+
+        save_id = _find_control_id(page.html, "ssipPAssistantSaveButton")
+        self._wait_for_sip_save(self._send(["click", save_id]), timeout=timeout)
+        return {
+            "name": name,
+            "username": username,
+            "incoming_calls": tuple(sorted(requested)),
+        }
+
+    def delete_sip_client(self, name: str, *, timeout: float = 15.0) -> dict[str, str]:
+        """Delete exactly one SIP phone account by display name."""
+        if not name.strip():
+            msg = "SIP client display name must not be empty"
+            raise InvalidInputError(msg)
+        page = self._navigate_page(
+            "IP-Telefone konfigurieren",
+            lambda html: _contains_class(html, "ssipPAssistant"),
+            timeout=timeout,
+        )
+        matches = [row for row in _sip_client_rows(page.html, page.commands) if row.name == name]
+        if not matches:
+            msg = f"SIP client {name!r} was not found"
+            raise InvalidInputError(msg)
+        if len(matches) > 1:
+            msg = f"SIP client display name {name!r} is ambiguous"
+            raise InvalidInputError(msg)
+
+        dialog = self._wait_for_page(
+            self._send(["click", matches[0].delete_control_id]),
+            lambda html: _contains_button(html, "Ja"),
+            timeout=timeout,
+            operation="delete SIP client confirmation",
+        )
+        confirm_id = _find_button_id(dialog.html, "Ja")
+        self._send(["click", confirm_id])
+        save_id = _find_control_id(page.html, "ssipPAssistantSaveButton")
+        self._wait_for_sip_save(self._send(["click", save_id]), timeout=timeout)
+        return {"name": name}
 
     def backup_save(self, *, timeout: float = 30.0) -> bytes:
         """Trigger a configuration backup and download the resulting file."""

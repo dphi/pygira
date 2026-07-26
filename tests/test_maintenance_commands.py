@@ -232,6 +232,106 @@ def test_tks_sip_info_command_never_prints_password_values() -> None:
     assert "secret" not in result.output
 
 
+def test_tks_sip_user_add_assigns_all_calls_by_default() -> None:
+    client = MagicMock()
+    client.create_sip_client.return_value = {
+        "name": "Pygira monitor",
+        "username": "pygira-monitor",
+        "incoming_calls": ("Main entrance", "Side entrance"),
+    }
+
+    with patch(
+        "pygira.commands.maintenance._tks_device",
+        return_value=(HOST, client),
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                "tks",
+                "sip",
+                "users",
+                "add",
+                "--client-name",
+                "Pygira monitor",
+                "--sip-user",
+                "pygira-monitor",
+                "--sip-password",
+                "monitor-secret",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "2 incoming-call assignment(s)" in result.output
+    assert "monitor-secret" not in result.output
+    client.create_sip_client.assert_called_once_with(
+        "Pygira monitor",
+        "pygira-monitor",
+        "monitor-secret",
+        incoming_calls=None,
+    )
+
+
+def test_tks_sip_user_add_accepts_specific_call_assignments() -> None:
+    client = MagicMock()
+    client.create_sip_client.return_value = {
+        "name": "Pygira monitor",
+        "username": "pygira-monitor",
+        "incoming_calls": ("Main entrance",),
+    }
+
+    with patch(
+        "pygira.commands.maintenance._tks_device",
+        return_value=(HOST, client),
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                "tks",
+                "sip",
+                "users",
+                "add",
+                "--client-name",
+                "Pygira monitor",
+                "--sip-user",
+                "pygira-monitor",
+                "--sip-password",
+                "monitor-secret",
+                "--incoming-call",
+                "Main entrance",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    client.create_sip_client.assert_called_once_with(
+        "Pygira monitor",
+        "pygira-monitor",
+        "monitor-secret",
+        incoming_calls={"Main entrance"},
+    )
+
+
+def test_tks_sip_user_delete_requires_confirmation() -> None:
+    client = MagicMock()
+
+    with patch(
+        "pygira.commands.maintenance._tks_device",
+        return_value=(HOST, client),
+    ):
+        aborted = CliRunner().invoke(
+            main,
+            ["tks", "sip", "users", "delete", "Pygira monitor"],
+            input="n\n",
+        )
+        deleted = CliRunner().invoke(
+            main,
+            ["tks", "sip", "users", "delete", "--yes", "Pygira monitor"],
+        )
+
+    assert aborted.exit_code == 1
+    assert deleted.exit_code == 0, deleted.output
+    client.delete_sip_client.assert_called_once_with("Pygira monitor")
+
+
 def test_tks_backup_accepts_direct_ip_and_command_local_config(tmp_path: Path) -> None:
     config_path = tmp_path / "devices.toml"
     config_path.write_text(

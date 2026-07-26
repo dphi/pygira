@@ -64,15 +64,16 @@ class TksIp:
             poll_interval=poll_interval,
         )
 
-    def _web(self) -> TksWebClient:
+    def _web(self, *, persist_session: bool | None = None) -> TksWebClient:
         """Return an authenticated web client, recovering one startup race."""
         last_error: TransportError | None = None
+        should_persist = self._persist_session if persist_session is None else persist_session
         for _ in range(_WEB_LOGIN_ATTEMPTS):
             self.activate_web()
             client = TksWebClient(
                 self.host,
                 timeout=self.timeout,
-                persist_session=self._persist_session,
+                persist_session=should_persist,
             )
             try:
                 client.login(self.username, self._password)
@@ -141,6 +142,27 @@ class TksIp:
     def sip_clients(self) -> dict[str, object]:
         """Return configured SIP clients and incoming-call assignments."""
         return self._web().sip_clients()
+
+    def create_sip_client(
+        self,
+        name: str,
+        username: str,
+        password: str,
+        *,
+        incoming_calls: set[str] | None = None,
+    ) -> dict[str, object]:
+        """Create a SIP monitoring account through the authenticated assistant."""
+        return self._web(persist_session=False).create_sip_client(
+            name,
+            username,
+            password,
+            incoming_calls=incoming_calls,
+            timeout=self.timeout,
+        )
+
+    def delete_sip_client(self, name: str) -> dict[str, str]:
+        """Delete one SIP account by its gateway display name."""
+        return self._web(persist_session=False).delete_sip_client(name, timeout=self.timeout)
 
     def status(self) -> cs.TksDeviceStatus:
         """Return a passive health snapshot without contacting port 8080."""

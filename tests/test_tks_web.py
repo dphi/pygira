@@ -6,7 +6,7 @@ import json
 import stat
 import urllib.parse
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,8 +25,10 @@ from tests.fixtures import (
     TKS_SIP_CALL_GROUP_TWO_HTML,
     TKS_SIP_CALL_ONE_HTML,
     TKS_SIP_CALL_TWO_HTML,
+    TKS_SIP_CALL_UNASSIGNED_HTML,
     TKS_SIP_CLIENTS_HTML,
     TKS_SIP_INCOMING_HTML,
+    TKS_SIP_NEW_CLIENT_HTML,
     TKS_SYSTEM_HTML,
 )
 
@@ -169,7 +171,7 @@ def test_parse_sip_clients_discards_password_values() -> None:
     commands = [
         [25, 30, "#c104", "#e17"],
         [26, 32, "#c108", "Front desk"],
-        [26, 32, "#c109", "Mobile"],
+        [26, 32, "#c122", "Mobile"],
         [26, 32, "#c114", "sip-user"],
         [26, 32, "#c116", "do-not-return-this"],
         [26, 32, "#c119", "do-not-return-this"],
@@ -490,6 +492,190 @@ def test_sip_clients_launches_assistant_without_sending_configuration() -> None:
         ["value", "c110", "e46"],
     ]
     assert "configured-password" not in repr(info)
+
+
+def test_create_sip_client_assigns_calls_and_saves_without_returning_password() -> None:
+    client = TksWebClient(HOST)
+    page = tks_web._PageSnapshot(
+        html=TKS_SIP_CLIENTS_HTML,
+        commands=[
+            [1],
+            [26, 32, "#c108", "Front desk"],
+            [26, 32, "#c114", "existing-user"],
+        ],
+    )
+    added = [
+        2,
+        [0, 21, "#clients", [TKS_SIP_NEW_CLIENT_HTML]],
+        [25, 30, "#c104", "#e30"],
+        [26, 32, "#c130", ""],
+    ]
+    incoming = [
+        3,
+        [0, 0, "#incoming", [TKS_SIP_INCOMING_HTML], True],
+        [0, 21, "#c124", [TKS_SIP_CALL_GROUP_ONE_HTML]],
+        [
+            0,
+            21,
+            "#e19 > td.groupContentInternal > table",
+            [TKS_SIP_CALL_UNASSIGNED_HTML],
+        ],
+    ]
+    send = MagicMock(
+        side_effect=[
+            added,
+            [4],
+            [5],
+            [6],
+            [7],
+            incoming,
+            [8],
+            [9, [0, 20, True], [0, 20, False]],
+        ],
+    )
+    with (
+        patch.object(client, "_navigate_page", return_value=page),
+        patch.object(client, "_send", send),
+    ):
+        result = client.create_sip_client(
+            "Pygira monitor",
+            "pygira-monitor",
+            "monitor-secret",
+        )
+
+    assert result == {
+        "name": "Pygira monitor",
+        "username": "pygira-monitor",
+        "incoming_calls": ("Main entrance",),
+    }
+    assert send.call_args_list[0].args[0] == ["link", "l13"]
+    assert ["value", "c137", True] in [call.args[0] for call in send.call_args_list]
+    assert send.call_args_list[-1].args[0] == ["click", "c106"]
+    assert "monitor-secret" not in repr(result)
+
+
+def test_create_sip_client_finds_tabs_retained_in_original_page_fragment() -> None:
+    client = TksWebClient(HOST)
+    new_client_without_tabs = TKS_SIP_NEW_CLIENT_HTML.replace(
+        """\
+<div class="ssipPTabBar"><div id="c132"><ul>
+  <li id="e31"><a>Zuordnung</a></li>
+  <li id="e32"><a>Rufe (eingehend)</a></li>
+</ul></div></div>
+""",
+        "",
+    )
+    page = tks_web._PageSnapshot(html=TKS_SIP_CLIENTS_HTML, commands=[[1]])
+    added = [
+        2,
+        [0, 21, "#clients", [new_client_without_tabs]],
+        [25, 30, "#c104", "#e30"],
+        [26, 32, "#c130", ""],
+    ]
+    incoming = [
+        3,
+        [0, 0, "#incoming", [TKS_SIP_INCOMING_HTML], True],
+        [0, 21, "#c124", [TKS_SIP_CALL_GROUP_ONE_HTML]],
+        [
+            0,
+            21,
+            "#e19 > td.groupContentInternal > table",
+            [TKS_SIP_CALL_UNASSIGNED_HTML],
+        ],
+    ]
+    send = MagicMock(
+        side_effect=[
+            added,
+            [4],
+            [5],
+            [6],
+            [7],
+            incoming,
+            [8],
+            [9, [0, 20, True], [0, 20, False]],
+        ],
+    )
+
+    with (
+        patch.object(client, "_navigate_page", return_value=page),
+        patch.object(client, "_send", send),
+    ):
+        client.create_sip_client("Monitor", "monitor", "monitor-secret")
+
+    assert ["value", "c110", "e46"] in [call.args[0] for call in send.call_args_list]
+
+
+def test_create_sip_client_rejects_unknown_call_before_saving() -> None:
+    client = TksWebClient(HOST)
+    page = tks_web._PageSnapshot(html=TKS_SIP_CLIENTS_HTML, commands=[[1]])
+    added = [
+        2,
+        [0, 21, "#clients", [TKS_SIP_NEW_CLIENT_HTML]],
+        [25, 30, "#c104", "#e30"],
+        [26, 32, "#c130", ""],
+    ]
+    incoming = [
+        3,
+        [0, 0, "#incoming", [TKS_SIP_INCOMING_HTML], True],
+        [0, 21, "#c124", [TKS_SIP_CALL_GROUP_ONE_HTML]],
+        [
+            0,
+            21,
+            "#e19 > td.groupContentInternal > table",
+            [TKS_SIP_CALL_UNASSIGNED_HTML],
+        ],
+    ]
+    send = MagicMock(side_effect=[added, [4], [5], [6], [7], incoming])
+    with (
+        patch.object(client, "_navigate_page", return_value=page),
+        patch.object(client, "_send", send),
+        pytest.raises(tks_web.InvalidInputError, match="Side entrance"),
+    ):
+        client.create_sip_client(
+            "Pygira monitor",
+            "pygira-monitor",
+            "monitor-secret",
+            incoming_calls={"Side entrance"},
+        )
+
+    assert ["click", "c106"] not in [call.args[0] for call in send.call_args_list]
+
+
+def test_delete_sip_client_confirms_exact_row_then_saves() -> None:
+    client = TksWebClient(HOST)
+    page = tks_web._PageSnapshot(
+        html=TKS_SIP_CLIENTS_HTML,
+        commands=[[1], [26, 32, "#c108", "Front desk"]],
+    )
+    dialog = [
+        2,
+        [
+            0,
+            0,
+            "#dialog",
+            ['<div><div id="c140"><button><span>Ja</span></button></div></div>'],
+            True,
+        ],
+    ]
+    send = MagicMock(
+        side_effect=[
+            dialog,
+            [3],
+            [4, [0, 20, True], [0, 20, False]],
+        ],
+    )
+    with (
+        patch.object(client, "_navigate_page", return_value=page),
+        patch.object(client, "_send", send),
+    ):
+        result = client.delete_sip_client("Front desk")
+
+    assert result == {"name": "Front desk"}
+    assert [call.args[0] for call in send.call_args_list] == [
+        ["click", "c109"],
+        ["click", "c140"],
+        ["click", "c106"],
+    ]
 
 
 @respx.mock

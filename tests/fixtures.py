@@ -266,6 +266,9 @@ TKS_NETWORK_HTML = """\
 
 TKS_SIP_CLIENTS_HTML = """\
 <div id="c2"><button><span>Übersicht</span></button></div>
+<div class="siteBottomButton ssipPAssistantSaveButton">
+  <div id="c106"><button><span>Speichern</span></button></div>
+</div>
 <div class="ssipPAssistant">
   <div class="ssipPTabBar e44"><div id="c110"><ul></ul></div></div>
   <li id="e45"><a>Zuordnung</a></li>
@@ -273,9 +276,16 @@ TKS_SIP_CLIENTS_HTML = """\
   <table class="ssipPTable"><tbody>
     <tr id="e16"><td class="ssipPTableEntry cell0">
       <div id="c108"><input type="text" /></div>
+    </td><td class="ssipPTableEntry cell1">
+      <div id="c109"><button><span>Löschen</span></button></div>
     </td></tr>
     <tr id="e17"><td class="ssipPTableEntry cell0">
-      <div id="c109"><input type="text" /></div>
+      <div id="c122"><input type="text" /></div>
+    </td><td class="ssipPTableEntry cell1">
+      <div id="c123"><button><span>Löschen</span></button></div>
+    </td></tr>
+    <tr><td class="ssipPTableEntry cell0">
+      <div id="c105"><a id="l13">Neues IP-Telefon hinzufügen</a></div>
     </td></tr>
   </tbody></table>
   <div class="ssipPAssignment">
@@ -287,6 +297,24 @@ TKS_SIP_CLIENTS_HTML = """\
     </div></div>
   </div>
 </div>
+"""
+
+TKS_SIP_NEW_CLIENT_HTML = """\
+<tr id="e30"><td class="ssipPTableEntry cell0">
+  <div id="c130"><input type="text" /></div>
+</td><td class="ssipPTableEntry cell1">
+  <div id="c131"><button><span>Löschen</span></button></div>
+</td></tr>
+<div class="ssipPTabBar"><div id="c132"><ul>
+  <li id="e31"><a>Zuordnung</a></li>
+  <li id="e32"><a>Rufe (eingehend)</a></li>
+</ul></div></div>
+<div class="ssipPATUserName"><div id="c133"><input type="text" /></div></div>
+<div class="ssipPATPassword"><div id="c134"><input type="password" /></div></div>
+<div class="ssipPATRePassword"><div id="c135"><input type="password" /></div></div>
+<div class="ssipPAWCheck"><div id="c136">
+  <input type="checkbox" checked="checked" />
+</div></div>
 """
 
 TKS_SIP_CALL_GROUP_ONE_HTML = """\
@@ -306,6 +334,12 @@ TKS_SIP_CALL_GROUP_TWO_HTML = """\
 TKS_SIP_CALL_ONE_HTML = """\
 <tr><td class="ssipPICTableEntry cell0"><div id="c125">
   <input type="checkbox" checked="checked" />
+</div></td><td class="ssipPICTableEntry cell1"><span>Main entrance</span></td></tr>
+"""
+
+TKS_SIP_CALL_UNASSIGNED_HTML = """\
+<tr><td class="ssipPICTableEntry cell0"><div id="c137">
+  <input type="checkbox" />
 </div></td><td class="ssipPICTableEntry cell1"><span>Main entrance</span></td></tr>
 """
 

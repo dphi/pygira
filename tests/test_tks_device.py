@@ -74,6 +74,44 @@ def test_tks_network_ntp_and_sip_inspection_use_authenticated_web_client() -> No
         assert device.sip_clients()["clients"] == []
 
 
+def test_tks_sip_client_mutations_use_authenticated_web_client() -> None:
+    client = _web_client()
+    client.create_sip_client.return_value = {
+        "name": "Pygira monitor",
+        "username": "monitor",
+        "incoming_calls": ("Front door",),
+    }
+    client.delete_sip_client.return_value = {"name": "Pygira monitor"}
+    with (
+        patch("pygira.devices.tks_ip.cs.activate_tks_webinterface"),
+        patch("pygira.devices.tks_ip.TksWebClient", return_value=client) as web_factory,
+    ):
+        device = TksIp(HOST, password="secret", timeout=TIMEOUT)
+
+        created = device.create_sip_client(
+            "Pygira monitor",
+            "monitor",
+            "sip-secret",
+            incoming_calls={"Front door"},
+        )
+        deleted = device.delete_sip_client("Pygira monitor")
+
+    assert created["username"] == "monitor"
+    assert deleted["name"] == "Pygira monitor"
+    client.create_sip_client.assert_called_once_with(
+        "Pygira monitor",
+        "monitor",
+        "sip-secret",
+        incoming_calls={"Front door"},
+        timeout=TIMEOUT,
+    )
+    client.delete_sip_client.assert_called_once_with("Pygira monitor", timeout=TIMEOUT)
+    assert [call.kwargs["persist_session"] for call in web_factory.call_args_list] == [
+        False,
+        False,
+    ]
+
+
 def test_tks_web_login_retries_one_transient_transport_failure() -> None:
     first = MagicMock()
     first.login.side_effect = TransportError("connection closed")
