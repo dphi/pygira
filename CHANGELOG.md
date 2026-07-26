@@ -5,6 +5,8 @@ All notable changes to pygira are documented here. The project follows
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-26
+
 ### Added
 
 - Add a public `TksIp` device facade with normalized device, diagnostics, firmware,
