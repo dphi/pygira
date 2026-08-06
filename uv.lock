@@ -1115,7 +1115,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8" },
-    { name = "cryptography", specifier = ">=44" },
+    { name = "cryptography", specifier = ">=50.0.0" },
     { name = "lxml", specifier = ">=5.3.2" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic", specifier = ">=2" },
