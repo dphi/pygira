@@ -202,6 +202,10 @@ class BaresipMonitor:
         config_path.write_text(config, encoding="utf-8")
         config_path.chmod(_CONFIG_MODE)
         accounts_path = directory / "accounts"
+        # Baresip's account module only loads registration credentials from this file.
+        # It is mode 0600 inside a mode-0700 temporary directory, is never logged or
+        # passed as a process argument, and is unlinked immediately after startup.
+        # codeql[py/clear-text-storage-sensitive-data]
         accounts_path.write_text(
             _account_parameter(self.host, self.username, self._password) + "\n",
             encoding="utf-8",

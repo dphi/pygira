@@ -1,6 +1,7 @@
 """Tests for the external Baresip monitor adapter."""
 
 import json
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from pygira.baresip_monitor import (
 from pygira.exceptions import DependencyUnavailableError, InvalidInputError, ProtocolError
 
 HOST = "192.0.2.10"
+OWNER_ONLY_MODE = 0o600
 
 
 class _ControlSocket:
@@ -98,6 +100,19 @@ def test_baresip_monitor_reports_missing_executable() -> None:
         pytest.raises(DependencyUnavailableError, match="brew install baresip"),
     ):
         BaresipMonitor(HOST, "monitor", "monitor-secret").start()
+
+
+def test_monitor_writes_registration_files_with_owner_only_permissions(tmp_path: Path) -> None:
+    monitor = BaresipMonitor(HOST, "monitor", "monitor-secret")
+    accounts_path = monitor._write_config(  # noqa: SLF001
+        tmp_path,
+        control_port=4567,
+        module_path=Path("/usr/lib/baresip/modules"),
+    )
+
+    assert stat.S_IMODE((tmp_path / "config").stat().st_mode) == OWNER_ONLY_MODE
+    assert stat.S_IMODE(accounts_path.stat().st_mode) == OWNER_ONLY_MODE
+    assert "auth_pass=monitor-secret" in accounts_path.read_text()
 
 
 @pytest.mark.parametrize(
