@@ -524,7 +524,7 @@ def _register_tks_sip_user_add(main: click.Group) -> None:
         multiple=True,
         help="Incoming call to assign; repeat as needed (default: all calls)",
     )
-    def tks_sip_user_add(  # noqa: PLR0913 - gateway and SIP identities are distinct
+    def tks_sip_user_add(  # noqa: PLR0913, PLR0917 - gateway and SIP identities are distinct
         tks_ip: str | None,
         tks_user: str,
         tks_pass: str,

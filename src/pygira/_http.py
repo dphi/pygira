@@ -63,7 +63,7 @@ class Response:
 class Client:
     """Context-managed session. Cookies persist across requests on one instance."""
 
-    def __init__(  # noqa: PLR0913 - mirrors the small supported HTTP option surface
+    def __init__(  # noqa: PLR0913, PLR0917 - mirrors the supported HTTP option surface
         self,
         base_url: str = "",
         headers: dict | None = None,

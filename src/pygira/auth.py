@@ -48,7 +48,7 @@ def _response_json(response: _Response) -> dict[str, Any]:
     return cast("dict[str, Any]", response.json() if response.content else {})
 
 
-def authenticated_request(  # noqa: PLR0913 - explicit session credentials and command data
+def authenticated_request(  # noqa: PLR0913, PLR0917 - explicit credentials and command data
     client: SessionClient,
     path: str,
     username: str,
