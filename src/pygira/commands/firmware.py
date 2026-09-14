@@ -48,7 +48,10 @@ def upgrade(**kwargs: object) -> None:
     if not firmware_file and not online:
         source = click.prompt("Update source", type=click.Choice(["file", "online"]))
         if source == "file":
-            firmware_file = click.prompt("Firmware file path", type=click.Path(exists=True))
+            firmware_file = cast(
+                "str",
+                click.prompt("Firmware file path", type=click.Path(exists=True)),
+            )
         else:
             online = True
 
