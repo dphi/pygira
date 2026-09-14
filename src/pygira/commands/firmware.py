@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 
@@ -41,17 +41,14 @@ def upgrade(**kwargs: object) -> None:
     password = cast("str | None", kwargs["password"])
     username = cast("str | None", kwargs["username"])
     timeout = cast("float", kwargs["timeout"])
-    firmware_file = cast("str | None", kwargs["firmware_file"])
+    firmware_file = cast("Any", kwargs["firmware_file"])
     online = cast("bool", kwargs["online"])
     no_wait = cast("bool", kwargs["no_wait"])
 
     if not firmware_file and not online:
         source = click.prompt("Update source", type=click.Choice(["file", "online"]))
         if source == "file":
-            firmware_file = cast(
-                "str",
-                click.prompt("Firmware file path", type=click.Path(exists=True)),
-            )
+            firmware_file = click.prompt("Firmware file path", type=click.Path(exists=True))
         else:
             online = True
 
