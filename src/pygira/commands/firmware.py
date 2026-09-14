@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 
@@ -41,7 +41,7 @@ def upgrade(**kwargs: object) -> None:
     password = cast("str | None", kwargs["password"])
     username = cast("str | None", kwargs["username"])
     timeout = cast("float", kwargs["timeout"])
-    firmware_file = cast("str | None", kwargs["firmware_file"])
+    firmware_file = cast("Any", kwargs["firmware_file"])
     online = cast("bool", kwargs["online"])
     no_wait = cast("bool", kwargs["no_wait"])
 
