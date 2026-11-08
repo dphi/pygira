@@ -194,7 +194,7 @@ class TksIp:
                 f"SIP PID: {diagnostics.sip_pid}",
                 f"SIP memory KiB: {diagnostics.sip_memory_kib}",
                 f"SIP responsive: {diagnostics.sip_responsive}",
-                f"TKS bus state: {diagnostics.tks_bus_state}",
+                f"TKS bus state: {diagnostics.tks_bus_state_description}",
                 "Recent failures: " + (", ".join(diagnostics.recent_failures) or "none"),
             ]
             sections.append({"title": "TKS-IP runtime", "blob": "\n".join(runtime)})
@@ -317,8 +317,8 @@ class TksIp:
         self._unsupported("SSH control")
 
     def reboot(self) -> None:
-        """Reject unavailable reboot control."""
-        self._unsupported("Restart")
+        """Request a restart through the authenticated gateway assistant."""
+        self._web(persist_session=False).reboot(timeout=self.timeout)
 
     def factory_reset(self) -> None:
         """Reject unavailable factory-reset control."""

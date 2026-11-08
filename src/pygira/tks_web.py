@@ -238,14 +238,16 @@ def _find_link_id(html: str, label: str) -> str:
     return link_id
 
 
-def _find_button_id(html: str, label: str) -> str:
+def _find_button_id(html: str, label: str, *, container: str = "") -> str:
     """Find a dynamic button-container id by its visible text."""
     tree = lxml_html.fromstring(html)
     controls = cast(
         "list[HtmlElement]",
         tree.xpath(
-            "//div[@id][button[normalize-space(.)=$label]]",
+            "//div[@id][button[normalize-space(.)=$label]]"
+            "[not($container) or ancestor::*[@class=$container]]",
             label=label,
+            container=container,
         ),
     )
     if not controls:
@@ -364,11 +366,11 @@ def _contains_widget(html_blob: str, css_class: str) -> bool:
     return True
 
 
-def _contains_button(html_blob: str, label: str) -> bool:
+def _contains_button(html_blob: str, label: str, *, container: str = "") -> bool:
     if not html_blob:
         return False
     try:
-        _find_button_id(html_blob, label)
+        _find_button_id(html_blob, label, container=container)
     except ProtocolError:
         return False
     return True
@@ -379,6 +381,9 @@ def _active_session_owner(html_blob: str) -> tuple[str | None, str | None] | Non
     if not html_blob:
         return None
     tree = lxml_html.fromstring(html_blob)
+    scripts = tree.xpath("//script/text()")
+    if scripts:
+        tree = lxml_html.fromstring(html_blob + "".join(scripts))
     users = cast("list[HtmlElement]", tree.xpath('//*[@class="leCurrentUser"]'))
     addresses = cast("list[HtmlElement]", tree.xpath('//*[@class="leCurrentUserIP"]'))
     if not users and not addresses:
@@ -883,7 +888,7 @@ class TksWebClient:
         self._navigation_html = None
         self._current_page_html = None
 
-    def _send(self, data: list[object], *, _reconnected: bool = False) -> list[Any]:
+    def _send(self, data: list[object], *, retry_session: bool = True) -> list[Any]:
         if self._sid is None:
             self._connect()
         resp = self._client.get(
@@ -895,26 +900,26 @@ class TksWebClient:
         except httpx.HTTPError as exc:
             if (
                 exc.status_code != _STALE_SESSION_STATUS
-                or _reconnected
+                or not retry_session
                 or not self._restored_session
             ):
                 raise
             self._invalidate_session()
-            return self._send(data, _reconnected=True)
+            return self._send(data, retry_session=False)
         commands = cast("list[Any]", resp.json())
         try:
             session_closed = _scan_session_signal(commands)
         except ProtocolError as exc:
-            if exc.code != "invalid-site-id" or _reconnected or not self._restored_session:
+            if exc.code != "invalid-site-id" or not retry_session or not self._restored_session:
                 raise
             self._invalidate_session()
-            return self._send(data, _reconnected=True)
+            return self._send(data, retry_session=False)
         if session_closed:
-            if _reconnected:
+            if not retry_session:
                 msg = "TKS-IP session closed repeatedly — could not re-establish a session"
                 raise ProtocolError(_PROTOCOL, "command loop", "session-closed", msg)
             self._invalidate_session()
-            return self._send(data, _reconnected=True)
+            return self._send(data, retry_session=False)
         return commands
 
     @staticmethod
@@ -1084,6 +1089,27 @@ class TksWebClient:
         timeout: float,
     ) -> str:
         return self._navigate_page(label, predicate, timeout=timeout).html
+
+    def reboot(self, *, timeout: float = 10.0) -> None:
+        """Request a restart through the gateway's administration page."""
+        label = "TKS-IP-Gateway neu starten"
+        container = "rSimpleButton"
+        page = self._navigate_page(
+            label, lambda html: _contains_button(html, label, container=container), timeout=timeout
+        )
+        restart_id = _find_button_id(page.html, label, container=container)
+        dialog = self._wait_for_page(
+            self._send(["click", restart_id]),
+            lambda html: _contains_button(html, "Neustart"),
+            timeout=timeout,
+            operation="restart confirmation",
+        )
+        confirm_id = _find_button_id(dialog.html, "Neustart")
+        try:
+            self._send(["click", confirm_id], retry_session=False)
+        except (httpx.HTTPError, ProtocolError, ValueError) as exc:
+            msg = "Gateway did not acknowledge the restart. Check its status before retrying."
+            raise ProtocolError(_PROTOCOL, "restart", "unconfirmed", msg) from exc
 
     def device_info(self, *, timeout: float = 10.0) -> dict[str, str]:
         """Read the read-only device-info panel from the Administration page.

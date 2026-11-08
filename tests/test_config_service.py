@@ -413,6 +413,30 @@ Jul 25 10:19:58 sipd: Error from sipd_core_keepalive.
     assert status.recent_failures == ("SIP operation failed",)
 
 
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("0", "Preparing bus address discovery (0x0)"),
+        ("1", "Waiting for bus signal (0x1)"),
+        ("2", "Waiting to send address probe (0x2)"),
+        ("3", "Waiting for address reply (0x3)"),
+        ("4", "Yielding to another address probe (0x4)"),
+        ("5", "Bus address accepted (0x5)"),
+        ("06", "Bus address unconfirmed (fallback) (0x06)"),
+        ("A", "Unrecognized bus state (0xA)"),
+        (None, "Unknown"),
+    ],
+)
+def test_tks_bus_state_description(code: str | None, expected: str) -> None:
+    content = f"Jul 25 10:19:55 tuerko: B_GREL_STATE: {code}".encode() if code else b""
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+
+    diagnostics = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+
+    assert diagnostics.tks_bus_state == code
+    assert diagnostics.tks_bus_state_description == expected
+
+
 @respx.mock
 def test_get_tks_device_status_uses_only_non_8080_surfaces() -> None:
     respx.get(f"http://{HOST}/").mock(

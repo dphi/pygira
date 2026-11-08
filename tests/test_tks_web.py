@@ -276,6 +276,21 @@ def test_connect_reports_existing_gateway_session() -> None:
 
 
 @respx.mock
+def test_connect_reports_gateway_session_in_script() -> None:
+    _mock_state()
+    page = """<html><body><script>$(document).ready(function() {
+        $(".nsMainContent").append(
+            "<div class='leCurrentUser'>admin</div>" +
+            "<div class='leCurrentUserIP'>192.168.1.254</div>"
+        );
+    });</script></body></html>"""
+    respx.get(f"http://{HOST}:8080/").mock(return_value=Response(200, text=page))
+
+    with pytest.raises(RuntimeError, match=r"already in use.*admin.*192\.168\.1\.254"):
+        TksWebClient(HOST).poll()
+
+
+@respx.mock
 def test_login_reuses_persisted_authenticated_session(tmp_path: Path) -> None:
     session_path = tmp_path / "session.json"
     state = _mock_state()
@@ -821,6 +836,51 @@ def test_login_raises_when_authenticated_menu_never_arrives() -> None:
 
 
 # ── backup / restore / update ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("closed", [False, True])
+@respx.mock
+def test_reboot_confirms_only_the_restart_dialog_once(closed: bool) -> None:
+    restart = "TKS-IP-Gateway neu starten"
+
+    def respond(request: Request) -> Response:
+        match _parse_data(request.url):
+            case ["reload"]:
+                return _body_response(f'<a id="l12">{restart}</a>')
+            case ["link", "l12"]:
+                return _body_response(
+                    '<div id="reset"><button>TKS-IP-Gateway zurücksetzen</button></div>'
+                    f'<div id="sd-warning"><button>{restart}</button></div>'
+                    '<div class="rSimpleButton"><div id="c107">'
+                    f"<button>{restart}</button></div></div>"
+                )
+            case ["click", "c107"]:
+                return _body_response(
+                    '<div id="c108"><button>Abbrechen</button></div>'
+                    '<div id="c109"><button>Neustart</button></div>'
+                )
+            case ["click", "c109"]:
+                if closed:
+                    return Response(200, json=[0, list(tks_web._SESSION_CLOSED)])
+                return _ack_response()
+            case event:
+                pytest.fail(f"Unexpected event: {event}")
+
+    route = respx.get(f"http://{HOST}:8080/json").mock(side_effect=respond)
+    client = TksWebClient(HOST)
+    client._sid = "test-sid"
+    if closed:
+        with pytest.raises(tks_web.ProtocolError, match="Check its status before retrying"):
+            client.reboot()
+    else:
+        client.reboot()
+
+    assert [_parse_data(call.request.url) for call in route.calls] == [
+        ["reload"],
+        ["link", "l12"],
+        ["click", "c107"],
+        ["click", "c109"],
+    ]
 
 
 @respx.mock
