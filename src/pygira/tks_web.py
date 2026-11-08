@@ -381,7 +381,7 @@ def _active_session_owner(html_blob: str) -> tuple[str | None, str | None] | Non
     if not html_blob:
         return None
     tree = lxml_html.fromstring(html_blob)
-    scripts = tree.xpath("//script/text()")
+    scripts = cast("list[str]", tree.xpath("//script/text()"))
     if scripts:
         tree = lxml_html.fromstring(html_blob + "".join(scripts))
     users = cast("list[HtmlElement]", tree.xpath('//*[@class="leCurrentUser"]'))
