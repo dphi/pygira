@@ -130,6 +130,8 @@ def test_tks_status_command_branches(status: TksDeviceStatus, expected: str) -> 
     assert result.exit_code == 0, result.output
     assert expected in result.output
     assert "Port 8080 was not contacted" in result.output
+    if status.diagnostics is not None:
+        assert "Bus address accepted (0x5)" in result.output
     factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
     device.status.assert_called_once()
 

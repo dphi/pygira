@@ -100,7 +100,7 @@ PATH_SUPPORT: dict[tuple[str, ...], DeviceSupport] = {
     ("device", "diagnostics"): ALL_DEVICES,
     ("device", "factory-reset"): G1_X1,
     ("device", "info"): ALL_DEVICES,
-    ("device", "restart"): G1_X1,
+    ("device", "restart"): ALL_DEVICES,
     ("firmware",): ALL_DEVICES,
     ("firmware", "check"): G1_X1,
     ("firmware", "upgrade"): ALL_DEVICES,

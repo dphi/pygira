@@ -189,6 +189,7 @@ def test_tks_diagnostic_model_includes_runtime_and_log_error() -> None:
 
     assert model.sections[1].title == "TKS-IP runtime"
     assert "Free memory KiB: 8192" in model.sections[1].blob
+    assert "Bus address accepted (0x5)" in model.sections[1].blob
     assert "invalid key" in error_page["data"]["diagnosticpage"][1]["blob"]
 
 
@@ -241,6 +242,19 @@ def test_tks_firmware_status_has_shared_model() -> None:
     assert model.state == "unknown"
 
 
+def test_tks_reboot_uses_fresh_authenticated_web_session() -> None:
+    client = _web_client()
+    with (
+        patch("pygira.devices.tks_ip.cs.activate_tks_webinterface"),
+        patch("pygira.devices.tks_ip.TksWebClient", return_value=client) as web_factory,
+    ):
+        TksIp(HOST, password="secret", timeout=TIMEOUT).reboot()
+
+    assert web_factory.call_args.kwargs["persist_session"] is False
+    client.login.assert_called_once_with("admin", "secret")
+    client.reboot.assert_called_once_with(timeout=TIMEOUT)
+
+
 @pytest.mark.parametrize(
     ("method", "args", "kwargs"),
     [
@@ -254,7 +268,6 @@ def test_tks_firmware_status_has_shared_model() -> None:
         ("commissioning_test", (), {}),
         ("enable_ssh", (), {}),
         ("disable_ssh", (), {}),
-        ("reboot", (), {}),
         ("factory_reset", (), {}),
     ],
 )

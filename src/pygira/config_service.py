@@ -109,6 +109,16 @@ _SIP_KEEPALIVE_RE = re.compile(
     r"\bsipdkeepaliveanswer:\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(-?\d+)",
 )
 _TKS_BUS_STATE_RE = re.compile(r"\bB_GREL_STATE:\s*([0-9A-Fa-f]+)")
+# Bus controller registration state machine in firmware 05.04.00.08V2 (PIC 03.21).
+_TKS_BUS_STATE_LABELS = {
+    "0": "Preparing bus address discovery",
+    "1": "Waiting for bus signal",
+    "2": "Waiting to send address probe",
+    "3": "Waiting for address reply",
+    "4": "Yielding to another address probe",
+    "5": "Bus address accepted",
+    "6": "Bus address unconfirmed (fallback)",
+}
 _TKS_FAILURE_PATTERNS = {
     "SIP daemon restarted": re.compile(r"\bSIPD RESTART(?:1|2)?\b"),
     "SIP operation failed": re.compile(r"\bError from sipd"),
@@ -151,6 +161,16 @@ class TksRuntimeDiagnostics:
     tks_bus_state: str | None
     tks_bus_observed_at: datetime | None
     recent_failures: tuple[str, ...]
+
+    @property
+    def tks_bus_state_description(self) -> str:
+        """Describe the last bus address registration state, including its raw code."""
+        if self.tks_bus_state is None:
+            return "Unknown"
+
+        code = self.tks_bus_state.lstrip("0") or "0"
+        label = _TKS_BUS_STATE_LABELS.get(code, "Unrecognized bus state")
+        return f"{label} (0x{self.tks_bus_state})"
 
 
 @dataclass(frozen=True)

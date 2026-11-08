@@ -165,9 +165,14 @@ pygira firmware upgrade --ip 192.168.1.240 --online       # update from Gira ser
 pygira firmware upgrade --ip 192.168.1.240 --file firmware.zip
 pygira --device tks-ip firmware upgrade --ip 192.168.1.10 --file firmware.bin
 pygira device restart --ip 192.168.1.240
+pygira device restart --device tks-ip --location W1 --name tks_ip
 pygira device factory-reset --ip 192.168.1.240 --confirm  # erases all configuration
 pygira device commissioning-test --ip 192.168.1.240
 ```
+
+For TKS-IP, restart uses the authenticated German gateway assistant. Door communication
+is briefly unavailable during reboot. Use `pygira tks status` to check the gateway
+before retrying if the assistant disconnects without acknowledging the request.
 
 **SSH access**
 
@@ -205,9 +210,25 @@ pygira --device tks-ip logs tail --ip 192.168.1.10  # live-tail decrypted syslog
 does not contact or start the port-8080 web application. It verifies the port-80
 TKS-IP identity and device clock, plus the firmware-defined SSH and SDA listeners.
 When an AES key is configured, it also reports recent free memory and load,
-internal SIP-daemon responsiveness, the last raw TKS bus state, and known failure
-signatures from the encrypted diagnostic log. These checks do not prove SIP
-registration, SDA cloud connectivity, or the electrical bus/LED state.
+internal SIP-daemon responsiveness, the last TKS bus address registration state,
+and known failure signatures from the encrypted diagnostic log. PyGira shows the
+registration state with its original hexadecimal code.
+
+| Code | TKS bus address registration |
+| --- | --- |
+| `0x0` | Preparing bus address discovery |
+| `0x1` | Waiting for bus signal |
+| `0x2` | Waiting to send address probe |
+| `0x3` | Waiting for address reply |
+| `0x4` | Yielding to another address probe |
+| `0x5` | Bus address accepted |
+| `0x6` | Bus address unconfirmed (fallback) |
+
+These labels describe the `B_GREL_STATE` transitions in firmware
+`05.04.00.08V2` (bus controller `03.21`). The controller can enter fallback
+after the address probes time out or when it receives an address it cannot
+adopt. SIP registration, SDA cloud connectivity, physical bus condition, and
+call delivery to a particular client require separate checks.
 
 `tks sip monitor` registers as a manual-answer SIP client and reports
 registration results, incoming calls, and call termination. It does not answer

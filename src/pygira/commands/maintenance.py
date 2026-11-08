@@ -219,7 +219,7 @@ def _add_tks_runtime_rows(
         table.add_row(
             "TKS bus",
             "[green]Observed[/green]",
-            f"raw state 0x{diagnostics.tks_bus_state}; "
+            f"{diagnostics.tks_bus_state_description} · "
             f"{_format_age(diagnostics.tks_bus_observed_at, reference)}",
         )
 
