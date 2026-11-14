@@ -9,9 +9,10 @@ import re
 import socket
 import ssl
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from lxml import etree
@@ -162,6 +163,8 @@ class TksRuntimeDiagnostics:
     tks_bus_observed_at: datetime | None
     recent_failures: tuple[str, ...]
     tks_bus_history: tuple[tuple[datetime, str], ...] = ()
+    timezone_assumed: bool = True
+    timezone_ambiguous: bool = False
 
     @property
     def tks_bus_state_since(self) -> datetime | None:
@@ -358,24 +361,48 @@ def parse_tks_runtime_diagnostics(
     *,
     reference_time: datetime | None = None,
     failure_window: timedelta = timedelta(minutes=15),
+    log_timezone: str | None = None,
 ) -> TksRuntimeDiagnostics:
     """Extract bounded health signals from a decrypted TKS-IP syslog."""
     reference = reference_time or datetime.now(timezone.utc)
     signals = _RuntimeSignals()
+    zone = ZoneInfo(log_timezone) if log_timezone else timezone.utc
+    local_reference = reference.astimezone(zone)
+    previous = None
+    ambiguous = False
 
     for line in content.decode("utf-8", errors="replace").splitlines():
         line_match = _SYSLOG_LINE_RE.match(line)
         if line_match is None:
             continue
-        timestamp = _syslog_time(line_match, reference)
+        timestamp = _syslog_time(line_match, local_reference)
         if timestamp is None:
             continue
+        alternatives = sorted(
+            {timestamp.replace(fold=fold).astimezone(timezone.utc) for fold in (0, 1)}
+        )
+        valid = [
+            value for value in alternatives
+            if value.astimezone(zone).replace(tzinfo=None) == timestamp.replace(tzinfo=None)
+        ]
+        if not valid:
+            ambiguous = True
+            continue
+        ambiguous |= len(valid) > 1
+        timestamp = next(
+            (value for value in valid if previous is None or value >= previous), valid[-1]
+        )
+        previous = timestamp
         message = line_match["message"]
         _read_resource_signals(signals, message, timestamp)
         _read_sip_signals(signals, message, timestamp)
         _read_bus_and_failure_signals(signals, message, timestamp)
 
-    return _runtime_diagnostics(signals, reference, failure_window)
+    return replace(
+        _runtime_diagnostics(signals, reference, failure_window),
+        timezone_assumed=log_timezone is None,
+        timezone_ambiguous=ambiguous,
+    )
 
 
 def get_tks_device_status(
@@ -383,6 +410,7 @@ def get_tks_device_status(
     *,
     timeout: float = 30.0,
     aes_key: str | bytes | None = None,
+    log_timezone: str | None = None,
 ) -> TksDeviceStatus:
     """Inspect the always-on TKS-IP services without accessing port 8080."""
     bootstrap_reachable = False
@@ -410,6 +438,7 @@ def get_tks_device_status(
             diagnostics = parse_tks_runtime_diagnostics(
                 log_content,
                 reference_time=device_time,
+                log_timezone=log_timezone,
             )
         except (httpx.HTTPError, OSError, ValueError) as exc:
             diagnostics_error = str(exc)

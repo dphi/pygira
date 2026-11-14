@@ -59,6 +59,7 @@ def _device_lines(device: DeviceConfig) -> list[str]:
         "app_username": device.app_username,
         "app_password": device.app_password,
         "aes_key": device.aes_key,
+        "log_timezone": device.log_timezone,
     }
     return [f"{key} = {_quote(value)}" for key, value in fields.items() if value]
 

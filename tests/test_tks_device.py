@@ -156,6 +156,12 @@ def test_tks_status_and_diagnostics_use_passive_service() -> None:
         aes_key="0123456789abcdefghijklmn",
     )
 
+def test_tks_status_passes_configured_log_timezone() -> None:
+    status = TksDeviceStatus(True, True, 200, None, None, True, True)
+    with patch("pygira.devices.tks_ip.cs.get_tks_device_status", return_value=status) as inspect:
+        assert TksIp(HOST, log_timezone="Europe/Berlin").status() is status
+    inspect.assert_called_once_with(HOST, timeout=30.0, aes_key=None, log_timezone="Europe/Berlin")
+
 
 def test_tks_diagnostic_model_includes_runtime_and_log_error() -> None:
     runtime = TksRuntimeDiagnostics(
@@ -210,7 +216,7 @@ def test_tks_diagnostic_model_includes_bus_history_and_duration() -> None:
     with patch.object(device, "status", return_value=status):
         model = device.diagnostic_page_model()
 
-    assert "TKS bus state since (log time): 2026-07-25 10:05:00" in model.sections[1].blob
+    assert "TKS bus state since (UTC): 2026-07-25 10:05:00" in model.sections[1].blob
     assert "TKS bus observed duration: 0:10:00" in model.sections[1].blob
     assert "2026-07-25 10:00:00 0x6" in model.sections[1].blob
     assert "2026-07-25 10:05:00 0x5" in model.sections[1].blob

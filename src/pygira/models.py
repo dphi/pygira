@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -46,9 +47,16 @@ class DeviceConfig(ConfigModel):
     app_username: str = ""
     app_password: str = ""
     aes_key: str = ""
+    log_timezone: str = ""
 
     @model_validator(mode="after")
     def _valid_device(self) -> "DeviceConfig":
+        if self.log_timezone:
+            try:
+                ZoneInfo(self.log_timezone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                msg = "Invalid IANA log timezone"
+                raise ValueError(msg) from exc
         if self.type == DeviceType.UNKNOWN:
             msg = "Device type 'unknown' cannot be configured"
             raise ValueError(msg)

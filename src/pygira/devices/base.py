@@ -27,3 +27,4 @@ class ResolvedTarget:
     password: str
     timeout: float
     aes_key: str | bytes | None = None
+    log_timezone: str | None = None

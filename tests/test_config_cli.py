@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from pygira.cli import _format_validation_error, main
+from pygira.commands.config import _write_config
 from pygira.context import TKS_AES_KEY_ENV, resolve_login, resolve_tks_aes_key
 from pygira.core.detect import DetectionResult
 from pygira.core.types import DeviceType
@@ -133,6 +134,21 @@ def test_config_add_tks_device_with_aes_key(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert load_config(path).devices["front_door"].aes_key == "0123456789abcdefghijklmn"
+
+def test_tks_log_timezone_survives_configuration_write(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        '[devices.front]\ntype = "tks-ip"\nip = "192.0.2.10"\n'
+        'password = "secret"\nlog_timezone = "Europe/Berlin"\n'
+    )
+    config = load_config(path)
+    _write_config(path, config)
+    assert load_config(path).devices["front"].log_timezone == "Europe/Berlin"
+
+def test_tks_log_timezone_rejects_unknown_zone() -> None:
+    with pytest.raises(ValidationError, match="Invalid IANA log timezone"):
+        DeviceConfig(type=DeviceType.TKS_IP, ip="192.0.2.10", password="secret",
+                     log_timezone="Mars/Unknown")
 
 
 def test_config_round_trips_quoted_device_and_location_names(tmp_path: Path) -> None:

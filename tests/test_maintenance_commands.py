@@ -133,7 +133,7 @@ def test_tks_status_command_branches(status: TksDeviceStatus, expected: str) -> 
     assert "Port 8080 was not contacted" in result.output
     if status.diagnostics is not None:
         assert "Bus address accepted (0x5)" in result.output
-    factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
+    factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None, log_timezone=None)
     device.status.assert_called_once()
 
 
@@ -174,8 +174,24 @@ def test_tks_status_shows_last_ten_bus_changes_and_observed_duration() -> None:
     assert "2026-07-25 10:15:00" in " ".join(result.output.split())
     assert "0x6" in result.output
     assert "observed for at least 0:03:00" in result.output
-    assert "Earlier history may have rotated out" in result.output
+    assert "Earlier history may have rotated out" in " ".join(result.output.split())
     assert "Port 8080 was not contacted" in result.output
+
+def test_tks_status_uses_configured_log_timezone(tmp_path: Path) -> None:
+    path = tmp_path / "devices.toml"
+    path.write_text(
+        f'[devices.front]\ntype = "tks-ip"\nip = "{HOST}"\n'
+        'password = "secret"\nlog_timezone = "Europe/Berlin"\n'
+    )
+    device = MagicMock()
+    device.status.return_value = TksDeviceStatus(True, True, 200, None, None, True, True)
+    with (
+        patch("pygira.commands.maintenance.TksIp", return_value=device) as factory,
+        patch("pygira.commands.maintenance.find_tks_aes_key", return_value=None),
+    ):
+        result = CliRunner().invoke(main, ["--config", str(path), "tks-status", "--ip", HOST])
+    assert result.exit_code == 0, result.output
+    factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None, log_timezone="Europe/Berlin")
 
 
 def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:
@@ -472,6 +488,7 @@ password = "other-secret"
         "configured-admin",
         "configured-secret",
         aes_key=None,
+        log_timezone=None,
     )
     assert output.read_bytes() == b"backup"
 

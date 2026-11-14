@@ -414,6 +414,71 @@ Jul 25 10:19:58 sipd: Error from sipd_core_keepalive.
 
 
 @pytest.mark.parametrize(
+    ("log_line", "reference", "expected"),
+    [
+        (
+            "Nov 14 16:28:50",
+            datetime(2026, 11, 14, 15, 28, 54, tzinfo=timezone.utc),
+            datetime(2026, 11, 14, 15, 28, 50, tzinfo=timezone.utc),
+        ),
+        (
+            "Jul 25 12:00:00",
+            datetime(2026, 7, 25, 10, 1, tzinfo=timezone.utc),
+            datetime(2026, 7, 25, 10, 0, tzinfo=timezone.utc),
+        ),
+        (
+            "Dec 31 23:59:00",
+            datetime(2026, 12, 31, 23, 5, tzinfo=timezone.utc),
+            datetime(2026, 12, 31, 22, 59, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_tks_log_timezone_offsets_and_local_year(
+    log_line: str, reference: datetime, expected: datetime
+) -> None:
+    status = cs.parse_tks_runtime_diagnostics(
+        f"{log_line} tuerko: B_GREL_STATE: 5\n".encode(),
+        reference_time=reference,
+        log_timezone="Europe/Berlin",
+    )
+    assert status.tks_bus_observed_at == expected
+    assert status.timezone_assumed is False
+
+
+def test_tks_log_dst_fall_back_uses_chronological_folds() -> None:
+    content = b"Oct 25 02:55:00 tuerko: B_GREL_STATE: 5\nOct 25 02:05:00 tuerko: B_GREL_STATE: 6\n"
+    status = cs.parse_tks_runtime_diagnostics(
+        content,
+        reference_time=datetime(2026, 10, 25, 2, 0, tzinfo=timezone.utc),
+        log_timezone="Europe/Berlin",
+    )
+    assert status.tks_bus_history == (
+        (datetime(2026, 10, 25, 0, 55, tzinfo=timezone.utc), "5"),
+        (datetime(2026, 10, 25, 1, 5, tzinfo=timezone.utc), "6"),
+    )
+    assert status.timezone_ambiguous is True
+
+def test_tks_log_spring_transition_skips_nonexistent_local_time() -> None:
+    content = (
+        b"Mar 29 01:59:00 tuerko: B_GREL_STATE: 5\n"
+        b"Mar 29 02:30:00 tuerko: B_GREL_STATE: 6\n"
+        b"Mar 29 03:01:00 tuerko: B_GREL_STATE: 5\n"
+    )
+    status = cs.parse_tks_runtime_diagnostics(
+        content, reference_time=datetime(2026, 3, 29, 2, 0, tzinfo=timezone.utc),
+        log_timezone="Europe/Berlin",
+    )
+    assert status.tks_bus_state == "5"
+    assert status.tks_bus_state_duration == timedelta(minutes=2)
+    assert status.timezone_ambiguous is True
+
+
+def test_tks_log_unknown_timezone_is_marked_as_assumed() -> None:
+    status = cs.parse_tks_runtime_diagnostics(b"Nov 14 16:28:50 tuerko: B_GREL_STATE: 5\n")
+    assert status.timezone_assumed is True
+
+
+@pytest.mark.parametrize(
     ("code", "expected"),
     [
         ("0", "Preparing bus address discovery (0x0)"),

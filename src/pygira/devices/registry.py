@@ -47,6 +47,7 @@ def create_device(target: ResolvedTarget) -> Device:
             target.password,
             timeout=target.timeout,
             aes_key=target.aes_key,
+            log_timezone=target.log_timezone,
         )
     msg = f"No device facade is available for {target.profile.device_type.value!r}"
     raise UnsupportedCapabilityError(msg)

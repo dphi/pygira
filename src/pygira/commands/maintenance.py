@@ -25,6 +25,7 @@ from pygira.context import (
     _selected_device,
     console,
     find_tks_aes_key,
+    find_tks_log_timezone,
     require_capability,
     resolve_login,
     resolve_tks_aes_key,
@@ -102,6 +103,7 @@ def _tks_device(
         username,
         password,
         aes_key=find_tks_aes_key(None, host=host),
+        log_timezone=find_tks_log_timezone(host),
     )
 
 
@@ -217,7 +219,7 @@ def _add_tks_runtime_rows(
         table.add_row("TKS bus", "[dim]Unknown[/dim]", "no bus state found")
     else:
         last_seen = diagnostics.tks_bus_observed_at
-        when = f"{last_seen:%Y-%m-%d %H:%M:%S} (device log time)" if last_seen else "unknown time"
+        when = f"{last_seen:%Y-%m-%d %H:%M:%S} (UTC)" if last_seen else "unknown time"
         table.add_row(
             "TKS bus",
             "[green]Observed[/green]",
@@ -262,11 +264,18 @@ def _print_tks_device_status(host: str, status: cs.TksDeviceStatus) -> None:
     else:
         _add_tks_runtime_rows(table, status.diagnostics, reference)
 
+    if status.diagnostics is not None:
+        if status.diagnostics.timezone_assumed:
+            console.print("[yellow]Log timezone not configured; UTC is assumed.[/yellow]")
+        if status.diagnostics.timezone_ambiguous:
+            console.print(
+                "[yellow]Log includes ambiguous or invalid daylight-saving timestamps.[/yellow]",
+            )
     console.print(_tks_status_summary(host, status))
     console.print(table)
     diagnostics = status.diagnostics
     if diagnostics is not None and diagnostics.tks_bus_history:
-        history = Table(title="TKS bus history (last 10 entries; device log time)")
+        history = Table(title="TKS bus history (last 10 entries; UTC)")
         history.add_column("Timestamp")
         history.add_column("State")
         for timestamp, state in diagnostics.tks_bus_history[-10:]:
@@ -276,7 +285,7 @@ def _print_tks_device_status(host: str, status: cs.TksDeviceStatus) -> None:
             f"Current state: observed for at least {diagnostics.tks_bus_state_duration} "
             "through the last bus sample; "
             f"since {diagnostics.tks_bus_state_since:%Y-%m-%d %H:%M:%S} "
-            "(device log time). Earlier history may have rotated out.",
+            "(UTC; assumed if timezone is not configured). Earlier history may have rotated out.",
         )
     console.print("[dim]Port 8080 was not contacted.[/dim]")
 
@@ -384,6 +393,7 @@ def _register_tks_web(main: click.Group) -> None:
                 host,
                 timeout=timeout,
                 aes_key=find_tks_aes_key(aes_key, host=host),
+                log_timezone=find_tks_log_timezone(host),
             ).status()
         _print_tks_device_status(host, status)
 

@@ -1,6 +1,6 @@
 """Shared device-target resolution for CLI commands."""
 
-from pygira.context import find_tks_aes_key, resolve_login
+from pygira.context import find_tks_aes_key, find_tks_log_timezone, resolve_login
 from pygira.core.types import DeviceType
 from pygira.devices.base import ResolvedTarget
 from pygira.devices.registry import Device, create_device
@@ -25,5 +25,8 @@ def resolve_device(
             password=resolved_password,
             timeout=timeout,
             aes_key=aes_key,
+            log_timezone=(
+                find_tks_log_timezone(host) if profile.device_type == DeviceType.TKS_IP else None
+            ),
         ),
     )

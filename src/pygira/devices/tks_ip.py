@@ -41,6 +41,7 @@ class TksIp:
         timeout: float = 30.0,
         *,
         aes_key: str | bytes | None = None,
+        log_timezone: str | None = None,
         persist_session: bool = True,
     ) -> None:
         """Create a TKS-IP facade for a single gateway."""
@@ -49,6 +50,7 @@ class TksIp:
         self.timeout = timeout
         self._password = password
         self._aes_key = aes_key
+        self._log_timezone = log_timezone
         self._persist_session = persist_session
 
     def activate_web(
@@ -170,6 +172,7 @@ class TksIp:
             self.host,
             timeout=self.timeout,
             aes_key=self._aes_key,
+            **({"log_timezone": self._log_timezone} if self._log_timezone else {}),
         )
 
     @staticmethod
@@ -188,6 +191,9 @@ class TksIp:
         if diagnostics is not None:
             runtime = [
                 f"Observed at: {diagnostics.observed_at}",
+                "Log timezone: "
+                + ("UTC assumed" if diagnostics.timezone_assumed else "configured"),
+                f"Ambiguous daylight-saving timestamps: {diagnostics.timezone_ambiguous}",
                 f"Free memory KiB: {diagnostics.free_memory_kib}",
                 f"Load averages: {diagnostics.load_averages}",
                 f"Tasks: {diagnostics.runnable_tasks}/{diagnostics.total_tasks}",
@@ -201,9 +207,9 @@ class TksIp:
                 since = diagnostics.tks_bus_history[-1][0]
                 runtime.extend(
                     [
-                        f"TKS bus state since (log time): {since:%Y-%m-%d %H:%M:%S}",
+                        f"TKS bus state since (UTC): {since:%Y-%m-%d %H:%M:%S}",
                         f"TKS bus observed duration: {diagnostics.tks_bus_state_duration}",
-                        "TKS bus history (log time):",
+                        "TKS bus history (UTC):",
                         *(
                             f"{timestamp:%Y-%m-%d %H:%M:%S} 0x{state}"
                             for timestamp, state in diagnostics.tks_bus_history[-10:]

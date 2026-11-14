@@ -298,6 +298,12 @@ def _configured_tks_aes_key(host: str) -> str | None:
     return device.aes_key if device is not None else None
 
 
+def find_tks_log_timezone(host: str) -> str | None:
+    """Return the configured timezone for an unambiguous TKS-IP host."""
+    device = _configured_tks_device(host)
+    return (device.log_timezone or None) if device is not None else None
+
+
 def find_tks_aes_key(aes_key: str | None, *, host: str | None = None) -> str | None:
     """Find a TKS logfile AES key without prompting."""
     if aes_key:
