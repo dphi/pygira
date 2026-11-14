@@ -68,6 +68,18 @@ def test_local_upgrade_handles_devices_without_progress_api(tmp_path: Path) -> N
     client.wait_for_completion.assert_not_called()
 
 
+def test_local_upgrade_prompts_for_firmware_path(tmp_path: Path) -> None:
+    firmware = tmp_path / "firmware.zip"
+    firmware.write_bytes(b"PK\x03\x04")
+    client = MagicMock()
+    client.install_firmware.return_value = {"started": True}
+    with patch("pygira.commands.firmware._device", return_value=client):
+        result = CliRunner().invoke(main, ["upgrade", "--no-wait"], input=f"file\n{firmware}\n")
+
+    assert result.exit_code == 0, result.output
+    client.install_firmware.assert_called_once_with(firmware)
+
+
 def test_commissioning_and_ssh_commands_delegate_to_client() -> None:
     runner = CliRunner()
     client = MagicMock()
