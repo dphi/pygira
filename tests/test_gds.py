@@ -183,6 +183,22 @@ async def test_concurrent_requests_are_correlated_by_echoed_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_config_accepts_string_boolean_echo() -> None:
+    ws = make_ws_mock(
+        gds_register_response(),
+        {
+            "response": {
+                "request": {"command": "GetDeviceConfig", "ipc": "true"},
+                "deviceConfig": {"ipc": {"DeviceName": "W5"}},
+            },
+        },
+    )
+    with ws_connect_patch(ws):
+        async with GdsClient("192.0.2.1", "device", "secret", timeout=0.1) as client:
+            assert await client.get_device_config() == {"DeviceName": "W5"}
+
+
+@pytest.mark.asyncio
 async def test_push_events_are_preserved_while_request_is_pending() -> None:
     ws, incoming = make_interactive_ws()
     push = {"event": {"urn": "urn:gds:dp:clock", "value": "12:34"}}

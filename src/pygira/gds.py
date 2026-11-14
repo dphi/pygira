@@ -370,7 +370,7 @@ class GdsClient:
 
     async def get_device_config(self) -> dict[str, str]:
         """Return the flat ipc device-config dict (all keys as strings)."""
-        resp = await self._send_request({"command": "GetDeviceConfig", "ipc": True})
+        resp = await self._send_request({"command": "GetDeviceConfig", "ipc": "true"})
         device_config = _response_data(resp).get("deviceConfig", {})
         if not isinstance(device_config, dict):
             return {}
