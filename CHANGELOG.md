@@ -5,6 +5,21 @@ All notable changes to pygira are documented here. The project follows
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-14
+
+### Added
+
+- Show the last ten TKS bus state changes with device-log timestamps and the
+  observed duration of the current state in `pygira tks status` and diagnostics.
+- Expose all retained bus state changes, the current state's first observation,
+  and its observed duration through `TksRuntimeDiagnostics`.
+
+### Changed
+
+- Keep repeated bus states from resetting the observed duration, and start a new
+  observation run after a backwards clock adjustment. Report bus timestamps as
+  device log time without assuming a timezone.
+
 ## 0.3.0 - 2026-11-08
 
 ### Added

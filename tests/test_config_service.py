@@ -5,7 +5,7 @@ API: HTTPS port 4433, auth: "basic <b64>", XML namespace http://service.schema.g
 
 import base64
 import gzip
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import NoReturn
 from unittest.mock import patch
 
@@ -435,6 +435,87 @@ def test_tks_bus_state_description(code: str | None, expected: str) -> None:
 
     assert diagnostics.tks_bus_state == code
     assert diagnostics.tks_bus_state_description == expected
+
+
+def test_tks_bus_history_tracks_changes_without_resetting_duration() -> None:
+    content = b"""
+Jul 25 10:00:00 tuerko: B_GREL_STATE: 6
+Jul 25 10:00:00 tuerko: B_GREL_STATE: 6
+Jul 25 10:01:00 tuerko: B_GREL_STATE: 0
+Jul 25 10:02:00 tuerko: B_GREL_STATE: 5
+Jul 25 10:03:00 tuerko: B_GREL_STATE: 05
+Jul 25 10:07:00 tuerko: B_GREL_STATE: 5
+"""
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+    status = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+    since = reference.replace(minute=2)
+
+    assert status.tks_bus_history == (
+        (reference.replace(minute=0), "6"),
+        (reference.replace(minute=1), "0"),
+        (since, "5"),
+    )
+    assert status.tks_bus_state == "5"
+    assert status.tks_bus_observed_at == reference.replace(minute=7)
+    assert status.tks_bus_state_since == since
+    assert status.tks_bus_state_duration == timedelta(minutes=5)
+
+
+def test_tks_bus_history_starts_new_run_after_clock_moves_backwards() -> None:
+    content = b"""
+Jul 25 11:00:00 tuerko: B_GREL_STATE: 6
+Jul 25 11:05:00 tuerko: B_GREL_STATE: 6
+Jul 25 10:00:00 tuerko: B_GREL_STATE: 6
+Jul 25 10:10:00 tuerko: B_GREL_STATE: 6
+"""
+    reference = datetime(2026, 7, 25, 11, 6, tzinfo=timezone.utc)
+    status = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+
+    assert status.tks_bus_history == (
+        (reference.replace(minute=0), "6"),
+        (reference.replace(hour=10, minute=0), "6"),
+    )
+    assert status.tks_bus_state_since == reference.replace(hour=10, minute=0)
+    assert status.tks_bus_state_duration == timedelta(minutes=10)
+
+
+def test_tks_bus_history_spans_new_year() -> None:
+    content = b"""
+Dec 31 23:59:00 tuerko: B_GREL_STATE: 5
+Jan  1 00:02:00 tuerko: B_GREL_STATE: 5
+"""
+    reference = datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc)
+    status = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+
+    assert status.tks_bus_state_since == datetime(2025, 12, 31, 23, 59, tzinfo=timezone.utc)
+    assert status.tks_bus_state_duration == timedelta(minutes=3)
+
+
+@pytest.mark.parametrize(
+    ("content", "duration"),
+    [
+        (b"", None),
+        (b"Jul 99 10:00:00 tuerko: B_GREL_STATE: 5", None),
+        (b"Jul 25 10:00:00 tuerko: B_GREL_STATE: 5", timedelta(0)),
+        (
+            b"Jul 25 10:00:00 tuerko: B_GREL_STATE: 5\nJul 25 10:10:00 tuerko: B_GREL_STATE: 5",
+            timedelta(minutes=10),
+        ),
+    ],
+)
+def test_tks_bus_history_with_missing_or_partial_log(
+    content: bytes,
+    duration: timedelta | None,
+) -> None:
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+    status = cs.parse_tks_runtime_diagnostics(content, reference_time=reference)
+
+    assert status.tks_bus_state_duration == duration
+    if duration is None:
+        assert status.tks_bus_history == ()
+        assert status.tks_bus_state_since is None
+    else:
+        assert status.tks_bus_history == ((reference.replace(minute=0), "5"),)
 
 
 @respx.mock

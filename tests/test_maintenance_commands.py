@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from pygira import config_service as cs
 from pygira.baresip_monitor import SipMonitorEvent
 from pygira.cli import main
 from pygira.config_service import (
@@ -134,6 +135,47 @@ def test_tks_status_command_branches(status: TksDeviceStatus, expected: str) -> 
         assert "Bus address accepted (0x5)" in result.output
     factory.assert_called_once_with(HOST, timeout=30.0, aes_key=None)
     device.status.assert_called_once()
+
+
+def test_tks_status_shows_last_ten_bus_changes_and_observed_duration() -> None:
+    content = (
+        "\n".join(
+            f"Jul 25 10:{minute:02d}:00 tuerko: B_GREL_STATE: {5 + minute % 2}"
+            for minute in range(13)
+        )
+        + "\nJul 25 10:15:00 tuerko: B_GREL_STATE: 5"
+    )
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+    diagnostics = cs.parse_tks_runtime_diagnostics(content.encode(), reference_time=reference)
+    status = TksDeviceStatus(
+        True,
+        True,
+        200,
+        reference,
+        0.5,
+        True,
+        True,
+        diagnostics=diagnostics,
+    )
+    device = MagicMock()
+    device.status.return_value = status
+    with (
+        patch("pygira.commands.maintenance.resolve_tks_ip", return_value=HOST),
+        patch("pygira.commands.maintenance.find_tks_aes_key", return_value=None),
+        patch("pygira.commands.maintenance.TksIp", return_value=device),
+    ):
+        result = CliRunner().invoke(main, ["tks", "status", "--tks-ip", HOST])
+
+    assert result.exit_code == 0, result.output
+    assert "TKS bus history" in result.output
+    assert "2026-07-25 10:03:00" in result.output
+    assert "2026-07-25 10:02:00" not in result.output
+    assert "2026-07-25 10:12:00" in result.output
+    assert "2026-07-25 10:15:00" in " ".join(result.output.split())
+    assert "0x6" in result.output
+    assert "observed for at least 0:03:00" in result.output
+    assert "Earlier history may have rotated out" in result.output
+    assert "Port 8080 was not contacted" in result.output
 
 
 def test_tks_backup_and_firmware_commands(tmp_path: Path) -> None:

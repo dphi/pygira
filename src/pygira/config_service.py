@@ -161,6 +161,20 @@ class TksRuntimeDiagnostics:
     tks_bus_state: str | None
     tks_bus_observed_at: datetime | None
     recent_failures: tuple[str, ...]
+    tks_bus_history: tuple[tuple[datetime, str], ...] = ()
+
+    @property
+    def tks_bus_state_since(self) -> datetime | None:
+        """Return the start of the current run in the available device log."""
+        return self.tks_bus_history[-1][0] if self.tks_bus_history else None
+
+    @property
+    def tks_bus_state_duration(self) -> timedelta | None:
+        """Return the span from the first to the last bus sample of the current run."""
+        since = self.tks_bus_state_since
+        if since is None or self.tks_bus_observed_at is None:
+            return None
+        return self.tks_bus_observed_at - since
 
     @property
     def tks_bus_state_description(self) -> str:
@@ -203,6 +217,7 @@ class _RuntimeSignals:
     tks_bus_state: str | None = None
     tks_bus_observed_at: datetime | None = None
     failures: list[tuple[datetime, str]] = field(default_factory=list)
+    tks_bus_history: list[tuple[datetime, str]] = field(default_factory=list)
 
 
 def _http_date(headers: dict[str, str]) -> datetime | None:
@@ -280,7 +295,17 @@ def _read_bus_and_failure_signals(
 ) -> None:
     bus_match = _TKS_BUS_STATE_RE.search(message)
     if bus_match:
-        signals.tks_bus_state = bus_match.group(1).upper()
+        state = bus_match.group(1).upper()
+        clock_reversed = (
+            signals.tks_bus_observed_at is not None and timestamp < signals.tks_bus_observed_at
+        )
+        if (
+            signals.tks_bus_state is None
+            or state.lstrip("0") != signals.tks_bus_state.lstrip("0")
+            or clock_reversed
+        ):
+            signals.tks_bus_history.append((timestamp, state))
+        signals.tks_bus_state = state
         signals.tks_bus_observed_at = timestamp
     signals.failures.extend(
         (timestamp, label)
@@ -324,6 +349,7 @@ def _runtime_diagnostics(
         tks_bus_state=signals.tks_bus_state,
         tks_bus_observed_at=signals.tks_bus_observed_at,
         recent_failures=recent_failures,
+        tks_bus_history=tuple(signals.tks_bus_history),
     )
 
 

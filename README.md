@@ -212,7 +212,15 @@ TKS-IP identity and device clock, plus the firmware-defined SSH and SDA listener
 When an AES key is configured, it also reports recent free memory and load,
 internal SIP-daemon responsiveness, the last TKS bus address registration state,
 and known failure signatures from the encrypted diagnostic log. PyGira shows the
-registration state with its original hexadecimal code.
+registration state with its original hexadecimal code. It also shows the last ten
+bus state changes with device-log timestamps and how long the current state has
+been observed, through its latest bus sample. Repeated identical states do not
+reset this duration. The duration is a lower bound within the available log;
+older entries may have rotated out, and logging gaps cannot prove continuous
+operation. A backwards clock adjustment starts a new observation run. Timestamps
+are device log time, without an inferred timezone. The Python diagnostic model
+exposes all changes in the loaded log as `tks_bus_history` (timestamp/code pairs),
+plus `tks_bus_state_since` and `tks_bus_state_duration`.
 
 | Code | TKS bus address registration |
 | --- | --- |

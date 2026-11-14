@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pygira.config_service import TksDeviceStatus, TksRuntimeDiagnostics
+from pygira.config_service import (
+    TksDeviceStatus,
+    TksRuntimeDiagnostics,
+    parse_tks_runtime_diagnostics,
+)
 from pygira.devices.tks_ip import TksIp
 from pygira.exceptions import InvalidInputError, TransportError, UnsupportedCapabilityError
 from pygira.models import NetworkConfig
@@ -191,6 +195,25 @@ def test_tks_diagnostic_model_includes_runtime_and_log_error() -> None:
     assert "Free memory KiB: 8192" in model.sections[1].blob
     assert "Bus address accepted (0x5)" in model.sections[1].blob
     assert "invalid key" in error_page["data"]["diagnosticpage"][1]["blob"]
+
+
+def test_tks_diagnostic_model_includes_bus_history_and_duration() -> None:
+    reference = datetime(2026, 7, 25, 10, 20, tzinfo=timezone.utc)
+    runtime = parse_tks_runtime_diagnostics(
+        b"Jul 25 10:00:00 tuerko: B_GREL_STATE: 6\n"
+        b"Jul 25 10:05:00 tuerko: B_GREL_STATE: 5\n"
+        b"Jul 25 10:15:00 tuerko: B_GREL_STATE: 5",
+        reference_time=reference,
+    )
+    status = TksDeviceStatus(True, True, 200, reference, 0.0, True, True, diagnostics=runtime)
+    device = TksIp(HOST)
+    with patch.object(device, "status", return_value=status):
+        model = device.diagnostic_page_model()
+
+    assert "TKS bus state since (log time): 2026-07-25 10:05:00" in model.sections[1].blob
+    assert "TKS bus observed duration: 0:10:00" in model.sections[1].blob
+    assert "2026-07-25 10:00:00 0x6" in model.sections[1].blob
+    assert "2026-07-25 10:05:00 0x5" in model.sections[1].blob
 
 
 def test_tks_logfile_requires_aes_key() -> None:

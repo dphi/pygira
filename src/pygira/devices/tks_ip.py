@@ -197,6 +197,19 @@ class TksIp:
                 f"TKS bus state: {diagnostics.tks_bus_state_description}",
                 "Recent failures: " + (", ".join(diagnostics.recent_failures) or "none"),
             ]
+            if diagnostics.tks_bus_history:
+                since = diagnostics.tks_bus_history[-1][0]
+                runtime.extend(
+                    [
+                        f"TKS bus state since (log time): {since:%Y-%m-%d %H:%M:%S}",
+                        f"TKS bus observed duration: {diagnostics.tks_bus_state_duration}",
+                        "TKS bus history (log time):",
+                        *(
+                            f"{timestamp:%Y-%m-%d %H:%M:%S} 0x{state}"
+                            for timestamp, state in diagnostics.tks_bus_history[-10:]
+                        ),
+                    ],
+                )
             sections.append({"title": "TKS-IP runtime", "blob": "\n".join(runtime)})
         elif status.diagnostics_error:
             sections.append(

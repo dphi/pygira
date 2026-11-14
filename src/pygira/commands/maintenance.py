@@ -216,11 +216,12 @@ def _add_tks_runtime_rows(
     if diagnostics.tks_bus_state is None:
         table.add_row("TKS bus", "[dim]Unknown[/dim]", "no bus state found")
     else:
+        last_seen = diagnostics.tks_bus_observed_at
+        when = f"{last_seen:%Y-%m-%d %H:%M:%S} (device log time)" if last_seen else "unknown time"
         table.add_row(
             "TKS bus",
             "[green]Observed[/green]",
-            f"{diagnostics.tks_bus_state_description} · "
-            f"{_format_age(diagnostics.tks_bus_observed_at, reference)}",
+            f"{diagnostics.tks_bus_state_description} · last seen {when}",
         )
 
     failures_ok = not diagnostics.recent_failures
@@ -263,6 +264,20 @@ def _print_tks_device_status(host: str, status: cs.TksDeviceStatus) -> None:
 
     console.print(_tks_status_summary(host, status))
     console.print(table)
+    diagnostics = status.diagnostics
+    if diagnostics is not None and diagnostics.tks_bus_history:
+        history = Table(title="TKS bus history (last 10 entries; device log time)")
+        history.add_column("Timestamp")
+        history.add_column("State")
+        for timestamp, state in diagnostics.tks_bus_history[-10:]:
+            history.add_row(f"{timestamp:%Y-%m-%d %H:%M:%S}", f"0x{state}")
+        console.print(history)
+        console.print(
+            f"Current state: observed for at least {diagnostics.tks_bus_state_duration} "
+            "through the last bus sample; "
+            f"since {diagnostics.tks_bus_state_since:%Y-%m-%d %H:%M:%S} "
+            "(device log time). Earlier history may have rotated out.",
+        )
     console.print("[dim]Port 8080 was not contacted.[/dim]")
 
 
