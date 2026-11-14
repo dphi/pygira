@@ -302,9 +302,16 @@ pygira device info --location home --name controller
 
 Locations are optional grouping only; devices can live directly under `[devices.<name>]`.
 TKS-IP device entries may include an `aes_key` used only to decrypt diagnostic logs.
-Set `log_timezone = "Europe/Berlin"` on the device to interpret its timezone-free syslog
-in its configured IANA timezone. Without it, UTC is assumed and status output warns about
-the assumption. Daylight-saving overlaps are flagged as ambiguous.
+Set `log_timezone = "Europe/Berlin"` on the device to interpret its timezone-free syslog.
+On the first interactive `tks status` request with an AES key, the CLI offers the local
+system's IANA timezone as the default, or can read the gateway's timezone label and ask
+you to confirm its IANA name. Reading the gateway starts its web interface and requires
+its credentials. The selected timezone is saved for a uniquely configured gateway. Files
+containing comments or legacy apartment entries are left untouched; add the timezone
+manually in those cases. The system and gateway may be in different timezones.
+In non-interactive use, the local timezone is assumed
+without saving; if it cannot be determined, UTC is assumed. Library callers retain the
+UTC fallback unless they supply a timezone. Daylight-saving overlaps are flagged as ambiguous.
 
 ## Development
 

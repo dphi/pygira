@@ -19,6 +19,7 @@ from pygira import config_service as cs
 from pygira import weather as weather_mod
 from pygira.baresip_monitor import BaresipMonitor, SipMonitorEvent
 from pygira.commands._target import resolve_device as _device_client
+from pygira.commands.tks_timezone import resolve_log_timezone
 from pygira.context import (
     _device_type,
     _prompt_configured_device,
@@ -287,7 +288,7 @@ def _print_tks_device_status(host: str, status: cs.TksDeviceStatus) -> None:
             f"since {diagnostics.tks_bus_state_since:%Y-%m-%d %H:%M:%S} "
             "(UTC; assumed if timezone is not configured). Earlier history may have rotated out.",
         )
-    console.print("[dim]Port 8080 was not contacted.[/dim]")
+    console.print("[dim]Port 8080 was not contacted for the status check.[/dim]")
 
 
 def register(main: click.Group) -> None:
@@ -386,14 +387,18 @@ def _register_tks_web(main: click.Group) -> None:
         help="Maximum seconds for the diagnostic log request",
     )
     def tks_status(tks_ip: str | None, aes_key: str | None, timeout: float) -> None:
-        """Inspect TKS-IP health without contacting the port-8080 web app."""
+        """Inspect TKS-IP health and optionally read its timezone from the web app."""
         host = resolve_tks_ip(tks_ip)
+        key = find_tks_aes_key(aes_key, host=host)
+        log_timezone = find_tks_log_timezone(host)
+        if key:
+            log_timezone = resolve_log_timezone(host, log_timezone, timeout)
         with console.status("[bold]Inspecting TKS-IP services…[/bold]"):
             status = TksIp(
                 host,
                 timeout=timeout,
-                aes_key=find_tks_aes_key(aes_key, host=host),
-                log_timezone=find_tks_log_timezone(host),
+                aes_key=key,
+                log_timezone=log_timezone,
             ).status()
         _print_tks_device_status(host, status)
 
