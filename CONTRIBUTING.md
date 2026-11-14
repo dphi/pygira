@@ -6,8 +6,14 @@ This project uses `uv` for dependency management and command execution. Supporte
 
 ```bash
 uv sync --group dev
-uv run pre-commit install
+uv tool install --python 3.11 'pre-commit>=4.6.1'
+pre-commit install
 ```
+
+The pre-commit tool runs separately on Python 3.11 or newer so that it can use
+the security-fixed version of its `filelock` dependency. The project and its
+tests continue to support Python 3.10. The hooks run checks using the project
+environment selected by `uv`.
 
 Device credentials live in `devices.toml`, which is intentionally ignored by Git. Use `uv run pygira config init`, `uv run pygira config add-device ...`, and `uv run pygira config validate` to manage local device entries. `devices.toml.example` shows the direct-device and optional-location TOML shape.
 

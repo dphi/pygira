@@ -49,7 +49,8 @@ def test_gateway_label_requires_confirmation(tmp_path: Path) -> None:
         patch("pygira.commands.maintenance.TksIp", return_value=device),
     ):
         result = CliRunner().invoke(
-            main, ["--config", str(path), "tks", "status", "--ip", "192.0.2.1"],
+            main,
+            ["--config", str(path), "tks", "status", "--ip", "192.0.2.1"],
             input="gateway\nEurope/Amsterdam\n",
         )
     assert result.exit_code == 0, result.output
@@ -84,8 +85,10 @@ def test_local_timezone_prefers_valid_tz(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_commented_configuration_is_not_rewritten(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
-    content = ('# Keep this comment\n[devices.front]\ntype = "tks-ip"\n'
-               'ip = "192.0.2.1"\npassword = "secret"\n')
+    content = (
+        '# Keep this comment\n[devices.front]\ntype = "tks-ip"\n'
+        'ip = "192.0.2.1"\npassword = "secret"\n'
+    )
     path.write_text(content)
     device = MagicMock()
     device.status.return_value = TksDeviceStatus(True, True, 200, None, None, True, True)

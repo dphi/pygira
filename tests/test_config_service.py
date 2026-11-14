@@ -458,6 +458,7 @@ def test_tks_log_dst_fall_back_uses_chronological_folds() -> None:
     )
     assert status.timezone_ambiguous is True
 
+
 def test_tks_log_spring_transition_skips_nonexistent_local_time() -> None:
     content = (
         b"Mar 29 01:59:00 tuerko: B_GREL_STATE: 5\n"
@@ -465,7 +466,8 @@ def test_tks_log_spring_transition_skips_nonexistent_local_time() -> None:
         b"Mar 29 03:01:00 tuerko: B_GREL_STATE: 5\n"
     )
     status = cs.parse_tks_runtime_diagnostics(
-        content, reference_time=datetime(2026, 3, 29, 2, 0, tzinfo=timezone.utc),
+        content,
+        reference_time=datetime(2026, 3, 29, 2, 0, tzinfo=timezone.utc),
         log_timezone="Europe/Berlin",
     )
     assert status.tks_bus_state == "5"

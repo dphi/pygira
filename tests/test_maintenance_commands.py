@@ -177,6 +177,7 @@ def test_tks_status_shows_last_ten_bus_changes_and_observed_duration() -> None:
     assert "Earlier history may have rotated out" in " ".join(result.output.split())
     assert "Port 8080 was not contacted" in result.output
 
+
 def test_tks_status_uses_configured_log_timezone(tmp_path: Path) -> None:
     path = tmp_path / "devices.toml"
     path.write_text(

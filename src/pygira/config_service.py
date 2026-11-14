@@ -382,7 +382,8 @@ def parse_tks_runtime_diagnostics(
             {timestamp.replace(fold=fold).astimezone(timezone.utc) for fold in (0, 1)}
         )
         valid = [
-            value for value in alternatives
+            value
+            for value in alternatives
             if value.astimezone(zone).replace(tzinfo=None) == timestamp.replace(tzinfo=None)
         ]
         if not valid:

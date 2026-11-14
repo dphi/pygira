@@ -156,6 +156,7 @@ def test_tks_status_and_diagnostics_use_passive_service() -> None:
         aes_key="0123456789abcdefghijklmn",
     )
 
+
 def test_tks_status_passes_configured_log_timezone() -> None:
     status = TksDeviceStatus(True, True, 200, None, None, True, True)
     with patch("pygira.devices.tks_ip.cs.get_tks_device_status", return_value=status) as inspect:

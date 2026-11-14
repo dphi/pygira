@@ -51,8 +51,10 @@ def resolve_log_timezone(host: str, configured: str | None, timeout: float) -> s
         return local
 
     click.echo("TKS logs have no timezone. The local system timezone may differ from the gateway.")
-    click.echo("Enter an IANA timezone, or 'gateway' to read the gateway's setting "
-               "(starts its web interface).")
+    click.echo(
+        "Enter an IANA timezone, or 'gateway' to read the gateway's setting "
+        "(starts its web interface)."
+    )
     default = local
     while True:
         selected = click.prompt("TKS log timezone", default=default, type=str).strip()
@@ -91,8 +93,9 @@ def _save_timezone(host: str, selected: str) -> str:
         d for d in devices if _device_type(d.type) == DeviceType.TKS_IP and d.address == host
     ]
     if len(matches) != 1:
-        click.echo("No unique configured gateway; timezone is used for this request only.",
-                   err=True)
+        click.echo(
+            "No unique configured gateway; timezone is used for this request only.", err=True
+        )
     elif matches[0].log_timezone:
         return matches[0].log_timezone
     elif b"#" in original or config.apartments:
